@@ -4,7 +4,7 @@
 # 可选：CODEX_VERSION=rust-v0.153.2、CODEX_FORCE=1、NO_MIRROR=1
 set -Eeuo pipefail
 
-SCRIPT_VERSION='2026.09.04.2'
+SCRIPT_VERSION='2026.09.04.3'
 SCRIPT_RELEASE_DATE='2026-09-04'
 show_script_changelog() {
   say "${C}脚本版本：${SCRIPT_VERSION}（${SCRIPT_RELEASE_DATE}）${N}"
@@ -12,7 +12,7 @@ show_script_changelog() {
   say '  · 修复基元律动 Responses 请求携带 web_search 导致的报错'
   say '  · 切换或更新已有基元律动配置时自动关闭不受支持的联网搜索'
   say '  · 修复删除模型后仍在切换或自动获取列表中出现的问题'
-  say '  · 删除模型时同步清理重复记录并加入隐藏列表，可手动重新添加恢复'
+  say '  · 删除模型时同步清理重复记录并加入隐藏列表，可手动重新添加恢复'\n  say '  · 新增远程模型隐藏与恢复菜单，修复旧删除记录再次出现'
   say '  · 更新脚本时显示版本、日期和修复内容'
 }
 
@@ -396,21 +396,99 @@ PY
  echo "已彻底删除并隐藏：$p/$m"
  echo '该模型不会再出现在自动获取列表；手动重新添加后可恢复。'
 }
+show_hidden_models() {
+ python3 - "$HIDDEN_MODELF" <<'PY'
+import sys
+rows=[]
+for line in open(sys.argv[1]):
+    parts=line.rstrip('\n').split('\t',1)
+    if len(parts)==2 and parts[0] and parts[1] and parts not in rows:
+        rows.append(parts)
+for i,(provider,model) in enumerate(rows,1):
+    print(f'  （{i}）{provider}/{model}')
+PY
+}
+get_hidden_model() {
+ python3 - "$HIDDEN_MODELF" "$1" <<'PY'
+import sys
+rows=[]
+for line in open(sys.argv[1]):
+    parts=line.rstrip('\n').split('\t',1)
+    if len(parts)==2 and parts[0] and parts[1] and parts not in rows:
+        rows.append(parts)
+try:
+    print('\t'.join(rows[int(sys.argv[2])-1]))
+except (ValueError,IndexError):
+    raise SystemExit(2)
+PY
+}
+hide_remote_model() {
+ local n row pid name url key token model
+ echo; echo '────────── 隐藏中转站返回的模型 ──────────'
+ list_providers
+ echo '  （0）返回'
+ read -rp '请选择中转站：' n
+ [ "$n" = 0 ] && return 0
+ row=$(get_provider_row "$n") || { echo '无效序号。'; return 1; }
+ IFS='	' read -r pid name url key <<<"$row"
+ token=$(load_key_value "$key") || {
+   echo "尚未保存 $name 的 API Key，无法读取远程模型列表。"
+   return 1
+ }
+ echo '正在获取尚未隐藏的模型……'
+ fetch_provider_models "$pid" "$url" "$token" || { unset token; return 1; }
+ unset token
+ select_remote_model || return 1
+ model=$SELECTED_MODEL
+ if python3 - "$CFG" "$pid" "$model" <<'PY'
+import sys,tomlkit
+d=tomlkit.parse(open(sys.argv[1]).read() or '')
+raise SystemExit(0 if d.get('model_provider')==sys.argv[2] and d.get('model')==sys.argv[3] else 1)
+PY
+ then
+   echo '不能隐藏当前正在使用的模型，请先切换到其他模型。'
+   return 1
+ fi
+ hidden_model_store hide "$pid" "$model"
+ model_store delete "$pid" "$model"
+ echo "已隐藏：$pid/$model"
+ echo '它不会再出现在“为已有中转站添加模型”的自动获取列表中。'
+}
+restore_hidden_model() {
+ local n row p m
+ echo; echo '────────── 恢复隐藏模型 ──────────'
+ if [ ! -s "$HIDDEN_MODELF" ]; then
+   echo '  （暂无隐藏模型）'
+   return 0
+ fi
+ show_hidden_models
+ echo '  （0）返回'
+ read -rp '输入要恢复的模型序号：' n
+ [ "$n" = 0 ] && return 0
+ row=$(get_hidden_model "$n") || { echo '无效序号。'; return 1; }
+ IFS='	' read -r p m <<<"$row"
+ hidden_model_store unhide "$p" "$m"
+ echo "已恢复显示：$p/$m"
+}
 model_menu() {
- local n s
+ local n
  while true; do
-  echo; echo '────────── 切换与管理模型 ──────────'
-  echo '  （1）查看并切换已添加的模型'
+  echo; echo '────────── 模型管理 ──────────'
+  echo '  （1）查看并切换已添加模型'
   echo '  （2）为已有中转站添加模型'
-  echo '  （3）编辑已添加的模型'
-  echo '  （4）删除已添加的模型'
+  echo '  （3）删除已添加模型'
+  echo '  （4）隐藏中转站返回的模型'
+  echo '  （5）恢复隐藏模型'
+  echo '  （6）编辑已添加模型'
   echo '  （0）返回'
-  read -rp '请选择 [0-4]：' n
+  read -rp '请选择 [0-6]：' n
   case "$n" in
    1) choose_model || true ;;
    2) add_existing_provider_model || true ;;
-   3) edit_model || true ;;
-   4) delete_model || true ;;
+   3) delete_model || true ;;
+   4) hide_remote_model || true ;;
+   5) restore_hidden_model || true ;;
+   6) edit_model || true ;;
    0) break ;;
    *) echo '无效选择，请重新输入。' ;;
   esac

@@ -20,14 +20,14 @@ cx storage     # 明确授权后，从 /sdcard 启动 Codex
 
 菜单还提供面向开发者的 Android Root 启动。该功能要求设备已经通过 Magisk Root 并安装 `tsu`，每次启动前必须完整输入“已悉知，后果自负”。这是真实的 Android 系统最高权限，不是 Ubuntu 容器中的模拟 root，错误操作可能损坏系统或导致数据丢失。
 
-脚本默认不启用 `danger-full-access`，不启用 Magisk/Android root，也不把手机共享存储加入普通启动路径。API Key 保存在 Ubuntu 容器内的 `~/.config/codex/env`，权限为 `600`。
+脚本默认不启用 `danger-full-access`、Magisk/Android Root，也不把手机共享存储加入普通启动路径。只有在 `cx` 菜单选择高风险 Root 模式并输入完整确认语后，才会尝试通过 `tsu` 启动。API Key 保存在 Ubuntu 容器内的 `~/.config/codex/env`，权限为 `600`。
 
 ## 测试方式
 
 首次安装：
 
 ```bash
-bash -n codex-install.sh
+bash tests/validate.sh
 bash codex-install.sh
 codex --version
 ```
@@ -61,7 +61,7 @@ NO_MIRROR=1 bash codex-install.sh
 ## 安全和升级机制
 
 - 从官方 GitHub Release API 获取稳定版本、下载地址和 SHA-256 digest。
-- 所有下载只允许 HTTPS；镜像无效、返回 HTML 或摘要不符时自动换源。
+- Codex Release API、组件和代理下载只允许 HTTPS；Ubuntu 包仍由 APT 签名校验，镜像异常时自动换源。
 - 检查 gzip、tar 路径穿越及符号/硬链接，只安装三个预期组件。
 - 三个组件必须来自同一个 Release；暂存验证后再替换，失败时恢复旧版。
 - 不覆盖已有 `AGENTS.md`；已有 `config.toml` 会先备份、解析验证并保留。

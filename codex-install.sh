@@ -4,13 +4,14 @@
 # 可选：CODEX_VERSION=rust-v0.153.2、CODEX_FORCE=1、NO_MIRROR=1
 set -Eeuo pipefail
 
-SCRIPT_VERSION='2026.09.05.1'
+SCRIPT_VERSION='2026.09.05.2'
 SCRIPT_RELEASE_DATE='2026-09-05'
 show_script_changelog() {
   say "${C}脚本版本：${SCRIPT_VERSION}（${SCRIPT_RELEASE_DATE}）${N}"
   say '本次更新提示：'
-  say '  · 自定义中转站支持 https:// 和 http:// 接口地址'
-  say '  · HTTP 地址启用前显示明文传输风险并要求确认'
+  say '  · 自定义中转站允许 API Key 留空，支持无鉴权接口'
+  say '  · 无 Key 时不写 env_key，也不发送 Authorization 请求头'
+  say '  · HTTP 自动获取模型同时支持有 Key与无 Key 模式'
   say '  · 保留存储绑定、bubblewrap、模型管理和菜单优化等历史修复'
 }
 
@@ -268,7 +269,9 @@ if op=='model':
 elif op=='provider':
  pid,name,url,key=sys.argv[3:7]
  t=d.setdefault('model_providers',tomlkit.table()).setdefault(pid,tomlkit.table())
- t['name']=name; t['base_url']=url; t['env_key']=key; t['wire_api']='responses'
+ t['name']=name; t['base_url']=url; t['wire_api']='responses'
+ if key: t['env_key']=key
+ else: t.pop('env_key',None)
 tmp=p.with_suffix('.tmp'); tmp.write_text(tomlkit.dumps(d)); tomlkit.parse(tmp.read_text()); tmp.replace(p)
 PY
 }
@@ -430,10 +433,14 @@ hide_remote_model() {
  [ "$n" = 0 ] && return 0
  row=$(get_provider_row "$n") || { echo '无效序号。'; return 1; }
  IFS='	' read -r pid name url key <<<"$row"
- token=$(load_key_value "$key") || {
-   echo "尚未保存 $name 的 API Key，无法读取远程模型列表。"
-   return 1
- }
+ if [ -z "$key" ]; then
+   token=''
+ else
+   token=$(load_key_value "$key") || {
+     echo "尚未保存 $name 的 API Key，无法读取远程模型列表。"
+     return 1
+   }
+ fi
  echo '正在获取尚未隐藏的模型……'
  fetch_provider_models "$pid" "$url" "$token" || { unset token; return 1; }
  unset token
@@ -521,11 +528,13 @@ save_key_value() {
 REMOTE_MODELS=()
 fetch_provider_models() {
  local pid=$1 url=$2 token=$3 tmp parsed
+ local -a headers
  REMOTE_MODELS=()
+ headers=(-H 'Accept: application/json')
+ [ -z "$token" ] || headers+=(-H "Authorization: Bearer $token")
  tmp=$(mktemp)
- if ! curl --proto '=https' --tlsv1.2 -fsS --retry 2 --connect-timeout 15 --max-time 30 \
-   -H "Authorization: Bearer $token" -H 'Accept: application/json' \
-   "${url%/}/models" -o "$tmp"; then
+ if ! curl --proto '=http,https' --tlsv1.2 -fsS --retry 2 --connect-timeout 15 --max-time 30 \
+   "${headers[@]}" "${url%/}/models" -o "$tmp"; then
    rm -f "$tmp"
    echo '自动获取模型列表失败，将改为手动输入模型名称。'
    return 1
@@ -605,12 +614,17 @@ add_existing_provider_model() {
  read -rp '请选择中转站：' n; [ "$n" = 0 ] && return 0
  row=$(get_provider_row "$n") || { echo '无效序号。'; return 1; }
  IFS=$'\t' read -r pid name url key <<<"$row"
- token=$(load_key_value "$key") || {
-   echo "尚未保存 $name 的 API Key。"
-   read -rsp '请输入 API Key（输入时不会显示，粘贴后按回车）：' token; echo
-   [ -n "$token" ] || { echo 'API Key 不能为空。'; return 1; }
-   save_key_value "$key" "$token" || return 1
- }
+ if [ -z "$key" ]; then
+   token=''
+   echo "$name 配置为无需 API Key。"
+ else
+   token=$(load_key_value "$key") || {
+     echo "尚未保存 $name 的 API Key。"
+     read -rsp '请输入 API Key（输入时不会显示，粘贴后按回车）：' token; echo
+     [ -n "$token" ] || { echo 'API Key 不能为空。'; return 1; }
+     save_key_value "$key" "$token" || return 1
+   }
+ fi
  echo '正在自动获取模型列表……'
  if fetch_provider_models "$pid" "$url" "$token"; then
    select_remote_model || { unset token; return 1; }; model=$SELECTED_MODEL
@@ -737,11 +751,16 @@ add_provider() {
    fi
  fi
  key=$(printf 'CODEX_%s_API_KEY' "$pid" | tr '[:lower:]-' '[:upper:]_')
- echo '请输入该服务的 API Key（粘贴时屏幕不会显示字符，这是正常的）。'
- read -rsp 'API Key（粘贴后按回车）：' token; echo
- [ -n "$token" ] || { echo '密钥不能为空。'; return 1; }
- save_key_value "$key" "$token" || { unset token; return 1; }
- echo '密钥已安全保存，正在自动获取模型列表……'
+ echo '请输入该服务的 API Key；如果中转站不需要 Key，可直接按回车跳过。'
+ read -rsp 'API Key（可留空）：' token; echo
+ if [ -n "$token" ]; then
+   save_key_value "$key" "$token" || { unset token; return 1; }
+   echo '密钥已安全保存。'
+ else
+   key=''
+   echo '已按无 API Key 模式配置。'
+ fi
+ echo '正在自动获取模型列表……'
  if fetch_provider_models "$pid" "$url" "$token"; then
    select_remote_model || { unset token; return 1; }
    model=$SELECTED_MODEL
@@ -756,14 +775,15 @@ add_provider() {
  [ "$kind" = 1 ] && echo 'TokenRhythm：请选择其文档中标注支持 Responses API 的模型。'
 }
 set_key() {
- local key=${1:-} value n row provider_count
+ local key=${1:-} value n row provider_count pid
  if [ -z "$key" ]; then
    provider_count=$(list_providers | wc -l)
    if [ "$provider_count" -gt 0 ]; then
      echo; echo '────────── 修改中转站 API Key ──────────'; list_providers; echo '  （0）返回'
      read -rp '请选择中转站：' n; [ "$n" = 0 ] && return 0
      row=$(get_provider_row "$n") || { echo '无效序号。'; return 1; }
-     IFS=$'\t' read -r _ _ _ key <<<"$row"
+     IFS=$'\t' read -r pid _ _ key <<<"$row"
+     [ -n "$key" ] || key=$(printf 'CODEX_%s_API_KEY' "$pid" | tr '[:lower:]-' '[:upper:]_')
    else
      read -rp '密钥变量名称：' key
    fi

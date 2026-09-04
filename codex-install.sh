@@ -274,7 +274,10 @@ CODEX_VERSION=${CODEX_VERSION:-latest} CODEX_FORCE=${CODEX_FORCE:-0} \
   proot-distro login "$DISTRO" --shared-tmp -- bash "$tmp_outer" "$mirror" "$target" "$apt_kind"
 
 install_wrapper() {
-  local name=$1 content=$2 dst="$PREFIX/bin/$name" stamp
+  local name content dst stamp
+  name=$1
+  content=$2
+  dst="$PREFIX/bin/$name"
   if [ -e "$dst" ] && ! grep -q 'codex-termux-managed' "$dst" 2>/dev/null; then
     stamp=$(date +%Y%m%d-%H%M%S); cp -a "$dst" "${dst}.bak.${stamp}"
     say "${Y}已备份原有 $dst → ${dst}.bak.${stamp}${N}"

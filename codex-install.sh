@@ -247,10 +247,12 @@ set -euo pipefail
 CFG=${HOME}/.codex/config.toml
 ENVF=${HOME}/.config/codex/env
 MODELF=${HOME}/.config/codex/models.tsv
+HIDDEN_MODELF=${HOME}/.config/codex/hidden-models.tsv
 mkdir -p "$(dirname "$CFG")" "$(dirname "$ENVF")"
 [ -f "$CFG" ] || : >"$CFG"
 [ -f "$MODELF" ] || : >"$MODELF"
-chmod 600 "$MODELF"
+[ -f "$HIDDEN_MODELF" ] || : >"$HIDDEN_MODELF"
+chmod 600 "$MODELF" "$HIDDEN_MODELF"
 toml_set() {
  python3 - "$CFG" "$@" <<'PY'
 import pathlib,sys,tomlkit
@@ -297,6 +299,10 @@ elif op=='edit':
     rows[i]=new
     rows[:]=[r for n,r in enumerate(rows) if r!=new or n==i]
     save(); print(old[0]+'\t'+old[1])
+elif op=='delete':
+    target=[sys.argv[3],sys.argv[4]]
+    rows[:]=[r for r in rows if r!=target]
+    save()
 PY
 }
 valid_model() {
@@ -304,7 +310,25 @@ valid_model() {
  [[ "$p" =~ ^[A-Za-z0-9_-]+$ ]] || { echo '中转站代号只能包含英文字母、数字、下划线和短横线'; return 1; }
  [ -n "$m" ] && [[ "$m" != *$'\n'* ]] && [[ "$m" != *$'\t'* ]] || { echo '模型名无效'; return 1; }
 }
-remember_model() { model_store add "$1" "$2"; }
+hidden_model_store() {
+ python3 - "$HIDDEN_MODELF" "$@" <<'PY'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); op=sys.argv[2]; target=[sys.argv[3],sys.argv[4]]
+rows=[]
+for line in p.read_text().splitlines():
+    parts=line.split('\t',1)
+    if len(parts)==2 and parts[0] and parts[1] and parts not in rows: rows.append(parts)
+if op=='hide' and target not in rows: rows.append(target)
+elif op=='unhide': rows=[r for r in rows if r!=target]
+tmp=p.with_suffix('.tmp')
+tmp.write_text(''.join(a+'\t'+b+'\n' for a,b in rows))
+tmp.chmod(0o600); tmp.replace(p)
+PY
+}
+remember_model() {
+ hidden_model_store unhide "$1" "$2"
+ model_store add "$1" "$2"
+}
 list() { python3 - "$CFG" <<'PY'
 import sys,tomlkit
 d=tomlkit.parse(open(sys.argv[1]).read() or '')
@@ -365,13 +389,10 @@ PY
  [ "$row" != "$current" ] || { echo '不能删除当前正在使用的模型，请先切换到其他模型。'; return 1; }
  read -rp "确认删除 $p/$m？请输入 y：" answer
  [ "$answer" = y ] || { echo '已取消。'; return 0; }
- python3 - "$MODELF" "$n" <<'PY'
-import pathlib,sys
-p=pathlib.Path(sys.argv[1]); i=int(sys.argv[2])-1; rows=p.read_text().splitlines()
-if i<0 or i>=len(rows): raise SystemExit(2)
-rows.pop(i); t=p.with_suffix('.tmp'); t.write_text(''.join(x+'\n' for x in rows)); t.chmod(0o600); t.replace(p)
-PY
- echo "已删除：$p/$m"
+ model_store delete "$p" "$m"
+ hidden_model_store hide "$p" "$m"
+ echo "已彻底删除并隐藏：$p/$m"
+ echo '该模型不会再出现在自动获取列表；手动重新添加后可恢复。'
 }
 model_menu() {
  local n s
@@ -406,7 +427,7 @@ save_key_value() {
 }
 REMOTE_MODELS=()
 fetch_provider_models() {
- local url=$1 token=$2 tmp parsed
+ local pid=$1 url=$2 token=$3 tmp parsed
  REMOTE_MODELS=()
  tmp=$(mktemp)
  if ! curl --proto '=https' --tlsv1.2 -fsS --retry 2 --connect-timeout 15 --max-time 30 \
@@ -417,18 +438,24 @@ fetch_provider_models() {
    return 1
  fi
  parsed="${tmp}.models"
- if ! python3 - "$tmp" >"$parsed" <<'PY'
-import json,sys
+ if ! python3 - "$tmp" "$HIDDEN_MODELF" "$pid" >"$parsed" <<'PY'
+import json,pathlib,sys
 try:
     d=json.load(open(sys.argv[1]))
 except Exception:
     raise SystemExit(2)
 items=d.get('data',[]) if isinstance(d,dict) else []
+hidden=set()
+hidden_path=pathlib.Path(sys.argv[2])
+if hidden_path.exists():
+    for line in hidden_path.read_text().splitlines():
+        parts=line.split('\t',1)
+        if len(parts)==2 and parts[0]==sys.argv[3]: hidden.add(parts[1])
 seen=set()
 for item in items:
     if isinstance(item,dict):
         mid=item.get('id')
-        if isinstance(mid,str) and mid and mid not in seen and '\n' not in mid and '\t' not in mid:
+        if isinstance(mid,str) and mid and mid not in seen and mid not in hidden and '\n' not in mid and '\t' not in mid:
             seen.add(mid); print(mid)
 PY
  then
@@ -492,7 +519,7 @@ add_existing_provider_model() {
    save_key_value "$key" "$token" || return 1
  }
  echo '正在自动获取模型列表……'
- if fetch_provider_models "$url" "$token"; then
+ if fetch_provider_models "$pid" "$url" "$token"; then
    select_remote_model || { unset token; return 1; }; model=$SELECTED_MODEL
  else
    read -rp '请输入模型名称（例如 gpt-5.2-codex）：' model
@@ -611,7 +638,7 @@ add_provider() {
  [ -n "$token" ] || { echo '密钥不能为空。'; return 1; }
  save_key_value "$key" "$token" || { unset token; return 1; }
  echo '密钥已安全保存，正在自动获取模型列表……'
- if fetch_provider_models "$url" "$token"; then
+ if fetch_provider_models "$pid" "$url" "$token"; then
    select_remote_model || { unset token; return 1; }
    model=$SELECTED_MODEL
  else

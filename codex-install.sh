@@ -378,36 +378,126 @@ model_menu() {
   esac
  done
 }
-add_provider() {
- local pid name url key model
- echo '提示：中转站必须支持 /v1/responses 接口。'
- read -rp '中转站代号（例如：myrelay）：' pid
- [[ "$pid" =~ ^[A-Za-z0-9_-]+$ ]] || { echo '代号只能包含英文字母、数字、下划线和短横线'; return 1; }
- case "$pid" in openai|ollama|lmstudio) echo '该代号由 Codex 保留，请换一个中转站代号'; return 1;; esac
- read -rp '中转站名称（可填中文）：' name; [ -n "$name" ] || return 1
- read -rp '接口地址（例如：https://example.com/v1）：' url
- [[ "$url" =~ ^https:// ]] || [[ "$url" =~ ^http://(localhost|127\.0\.0\.1)([:/]|$) ]] || { echo '接口地址必须以 https:// 开头；本机地址可以使用 http://'; return 1; }
- read -rp '模型名称（必须与中转站提供的一致）：' model; [ -n "$model" ] || return 1
- key=$(printf 'CODEX_%s_API_KEY' "$pid" | tr '[:lower:]-' '[:upper:]_')
- echo '现在请输入该中转站的密钥。'
- set_key "$key" || return 1
- toml_set provider "$pid" "$name" "$url" "$key"
- use_model "$pid/$model"
-}
-set_key() {
- local key=${1:-} value tmp
- if [ -z "$key" ]; then
-   read -rp '密钥变量名称：' key
- fi
+save_key_value() {
+ local key=$1 value=$2 tmp
  [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo '密钥变量名称无效'; return 1; }
- read -rsp '中转站密钥（输入时不会显示）：' value; echo
  [ -n "$value" ] || { echo '密钥不能为空'; return 1; }
  tmp=$(mktemp "${ENVF}.XXXXXX")
  if [ -f "$ENVF" ]; then
    grep -vE "^export ${key}=" "$ENVF" >"$tmp" || true
  fi
- printf 'export %s=%q\n' "$key" "$value" >>"$tmp"; chmod 600 "$tmp"; mv "$tmp" "$ENVF"
- unset value; echo "密钥已安全保存。"
+ printf 'export %s=%q\n' "$key" "$value" >>"$tmp"
+ chmod 600 "$tmp"; mv "$tmp" "$ENVF"
+}
+REMOTE_MODELS=()
+fetch_provider_models() {
+ local url=$1 token=$2 tmp
+ REMOTE_MODELS=()
+ tmp=$(mktemp)
+ if ! curl --proto '=https' --tlsv1.2 -fsS --retry 2 --connect-timeout 15 --max-time 30 \
+   -H "Authorization: Bearer $token" -H 'Accept: application/json' \
+   "${url%/}/models" -o "$tmp"; then
+   rm -f "$tmp"
+   echo '自动获取模型列表失败，将改为手动输入模型名称。'
+   return 1
+ fi
+ mapfile -t REMOTE_MODELS < <(python3 - "$tmp" <<'PY'
+import json,sys
+try:
+    d=json.load(open(sys.argv[1]))
+except Exception:
+    raise SystemExit(2)
+items=d.get('data',[]) if isinstance(d,dict) else []
+seen=set()
+for item in items:
+    if isinstance(item,dict):
+        mid=item.get('id')
+        if isinstance(mid,str) and mid and mid not in seen and '\n' not in mid and '\t' not in mid:
+            seen.add(mid); print(mid)
+PY
+ )
+ rm -f "$tmp"
+ [ "${#REMOTE_MODELS[@]}" -gt 0 ] || {
+   echo '接口已响应，但没有解析到标准 OpenAI /v1/models 列表，将改为手动输入。'
+   return 1
+ }
+ return 0
+}
+select_remote_model() {
+ local n i
+ SELECTED_MODEL=''
+ echo
+ echo "已自动获取 ${#REMOTE_MODELS[@]} 个模型："
+ for i in "${!REMOTE_MODELS[@]}"; do printf '  （%d）%s\n' "$((i+1))" "${REMOTE_MODELS[$i]}"; done
+ echo '  （0）手动输入模型名称'
+ echo
+ echo '注意：新版 Codex 仅支持 Responses API；中转站列表里的模型不一定全部兼容 Codex。'
+ read -rp "请选择模型 [0-${#REMOTE_MODELS[@]}]：" n
+ if [ "$n" = 0 ]; then
+   read -rp '模型名称：' SELECTED_MODEL
+ elif [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -ge 1 ] && [ "$n" -le "${#REMOTE_MODELS[@]}" ]; then
+   SELECTED_MODEL=${REMOTE_MODELS[$((n-1))]}
+ else
+   echo '无效选择。'; return 1
+ fi
+ [ -n "$SELECTED_MODEL" ] || { echo '模型名称不能为空。'; return 1; }
+}
+add_provider() {
+ local kind pid name url key token model
+ echo
+ echo '────────── 添加中转站 ──────────'
+ echo '  （1）基元律动 TokenRhythm（推荐预设）'
+ echo '  （2）自定义 OpenAI Responses 兼容中转站'
+ echo '  （0）返回'
+ read -rp '请选择 [0-2]：' kind
+ case "$kind" in
+   1)
+     pid='tokenrhythm'
+     name='基元律动 TokenRhythm'
+     url='https://tokenrhythm.studio/v1'
+     echo "已使用预设接口地址：$url"
+     ;;
+   2)
+     read -rp '中转站代号（例如：myrelay）：' pid
+     [[ "$pid" =~ ^[A-Za-z0-9_-]+$ ]] || { echo '代号只能包含英文字母、数字、下划线和短横线'; return 1; }
+     case "$pid" in openai|ollama|lmstudio) echo '该代号由 Codex 保留，请换一个中转站代号'; return 1;; esac
+     read -rp '中转站名称（可填中文）：' name; [ -n "$name" ] || return 1
+     read -rp '接口地址（例如：https://example.com/v1）：' url
+     [[ "$url" =~ ^https:// ]] || [[ "$url" =~ ^http://(localhost|127\.0\.0\.1)([:/]|$) ]] || { echo '接口地址必须以 https:// 开头；本机地址可以使用 http://'; return 1; }
+     ;;
+   0) return 0 ;;
+   *) echo '无效选择。'; return 1 ;;
+ esac
+ key=$(printf 'CODEX_%s_API_KEY' "$pid" | tr '[:lower:]-' '[:upper:]_')
+ echo '请输入该中转站的 API Key。'
+ read -rsp '密钥（输入时不会显示）：' token; echo
+ [ -n "$token" ] || { echo '密钥不能为空。'; return 1; }
+ save_key_value "$key" "$token" || { unset token; return 1; }
+ echo '密钥已安全保存，正在读取 /v1/models……'
+ if fetch_provider_models "$url" "$token"; then
+   select_remote_model || { unset token; return 1; }
+   model=$SELECTED_MODEL
+ else
+   read -rp '模型名称（必须与中转站提供的一致）：' model
+   [ -n "$model" ] || { unset token; return 1; }
+ fi
+ unset token
+ toml_set provider "$pid" "$name" "${url%/}" "$key"
+ use_model "$pid/$model"
+ echo '中转站添加完成。'
+ if [ "$pid" = tokenrhythm ]; then
+   echo '提示：TokenRhythm 中只有标注“Responses API 原生支持”的模型可用于当前新版 Codex。'
+ fi
+}
+set_key() {
+ local key=${1:-} value
+ if [ -z "$key" ]; then
+   read -rp '密钥变量名称：' key
+ fi
+ [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo '密钥变量名称无效'; return 1; }
+ read -rsp '中转站密钥（输入时不会显示）：' value; echo
+ save_key_value "$key" "$value" || { unset value; return 1; }
+ unset value; echo '密钥已安全保存。'
 }
 menu() {
  while true; do
@@ -418,7 +508,7 @@ menu() {
   echo '  模型与中转站管理'
   echo '════════════════════════════════════'
   echo '  （1）切换模型'
-  echo '  （2）添加中转站'
+  echo '  （2）添加中转站 / 自动获取模型'
   echo '  （3）修改中转站密钥'
   echo '  （4）编辑高级配置'
   echo '  （5）启动 Codex'

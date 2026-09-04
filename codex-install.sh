@@ -48,6 +48,7 @@ TARGET=$2
 APT_KIND=$3
 VERSION=${CODEX_VERSION:-latest}
 FORCE=${CODEX_FORCE:-0}
+CODEX_UPDATE_ONLY=${CODEX_UPDATE_ONLY:-0}
 stage='初始化'
 work=''; rollback=''; changed=0
 fail() { printf '错误：%s\n' "$*" >&2; exit 1; }
@@ -186,6 +187,11 @@ PY
   changed=0
 fi
 
+if [ "$CODEX_UPDATE_ONLY" = 1 ]; then
+  printf 'Codex 组件更新完成：%s\n' "$tag"
+  exit 0
+fi
+
 stage='安装 cx 助手'
 cx_tmp=$(mktemp /usr/local/bin/.cx.XXXXXX)
 cat >"$cx_tmp" <<'CX'
@@ -305,7 +311,13 @@ chmod 700 "$tmp_outer"
 
 stage='在 Ubuntu 内安装 Codex'
 CODEX_VERSION=${CODEX_VERSION:-latest} CODEX_FORCE=${CODEX_FORCE:-0} \
+CODEX_UPDATE_ONLY=${CODEX_UPDATE_ONLY:-0} \
   proot-distro login "$DISTRO" --shared-tmp -- bash "$tmp_outer" "$mirror" "$target" "$apt_kind"
+
+if [ "${CODEX_UPDATE_ONLY:-0}" = 1 ]; then
+  say "${G}Codex 程序更新完成；菜单脚本未修改。${N}"
+  exit 0
+fi
 
 install_wrapper() {
   local name content dst stamp
@@ -334,6 +346,44 @@ storage_codex() {
 inner_cx() {
   proot-distro login --isolated codex-ubuntu -- bash -lc '\''[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; exec cx "$@"'\'' bash "$@"
 }
+root_codex() {
+  local answer root_command
+  echo
+  echo '⚠️  高风险警告：Android Root 开发者模式'
+  echo '此功能会通过 Magisk/tsu 以 Android 系统最高权限启动 Codex。'
+  echo 'Codex 可能读取、修改或删除系统文件，错误操作可能导致：'
+  echo '  · 手机数据永久丢失'
+  echo '  · 系统损坏或无法开机'
+  echo '  · 应用及账号敏感信息泄露'
+  echo
+  echo '这不是 Ubuntu 容器里的模拟 root，而是真实的 Android Root 权限。'
+  echo '仅供清楚了解 Android Root 风险的开发者使用。'
+  echo '────────────────────────────────────'
+  read -rp '请输入“已悉知，后果自负”继续：' answer
+  if [ "$answer" != '已悉知，后果自负' ]; then
+    echo '输入不匹配，已取消 Root 启动。'
+    return 1
+  fi
+  if ! command -v tsu >/dev/null 2>&1; then
+    echo '未检测到 tsu。手机必须已通过 Magisk Root，再运行：pkg install tsu'
+    return 1
+  fi
+  root_command="$PREFIX/bin/proot-distro login codex-ubuntu -- bash -lc '\''[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; exec codex'\''"
+  echo '正在以 Android Root 权限启动 Codex……'
+  tsu -c "$root_command"
+}
+update_codex() {
+  curl -fL "https://raw.githubusercontent.com/YImu25/codex-termux/main/codex-install.sh?codex-update=$(date +%s)" | CODEX_UPDATE_ONLY=1 bash
+}
+update_helper() {
+  local installed_version
+  installed_version=$(proot-distro login --isolated codex-ubuntu -- cat /usr/local/share/codex-termux/release 2>/dev/null) || {
+    echo '无法读取当前 Codex 版本，请先完成 Codex 安装。'
+    return 1
+  }
+  echo "保持 Codex 版本 $installed_version 不变，仅更新菜单脚本。"
+  curl -fL "https://raw.githubusercontent.com/YImu25/codex-termux/main/codex-install.sh?script-update=$(date +%s)" | CODEX_VERSION="$installed_version" bash
+}
 show_menu() {
   local choice
   while true; do
@@ -346,17 +396,21 @@ show_menu() {
     echo "  （3）模型、中转站与密钥管理"
     echo "  （4）查看 Codex 版本"
     echo "  （5）进入 Ubuntu 22.04"
-    echo "  （6）更新 Codex 与助手"
+    echo "  （6）只更新 Codex 程序"
+    echo "  （7）只更新菜单脚本"
+    echo "  （8）Android Root 启动（开发者/高风险）"
     echo "  （0）退出"
     echo "════════════════════════════════════"
-    read -rp "请选择 [0-6]：" choice
+    read -rp "请选择 [0-8]：" choice
     case "$choice" in
       1) safe_codex ;;
       2) storage_codex ;;
       3) inner_cx ;;
       4) proot-distro login --isolated codex-ubuntu -- codex --version ;;
       5) proot-distro login codex-ubuntu ;;
-      6) curl -fL "https://raw.githubusercontent.com/YImu25/codex-termux/main/codex-install.sh?update=$(date +%s)" | bash ;;
+      6) update_codex ;;
+      7) update_helper ;;
+      8) root_codex ;;
       0) echo "再见"; break ;;
       *) echo "无效选择，请重新输入。" ;;
     esac
@@ -368,9 +422,11 @@ case "${1:-}" in
   storage) shift; storage_codex "$@" ;;
   ubuntu) exec proot-distro login codex-ubuntu ;;
   version) exec proot-distro login --isolated codex-ubuntu -- codex --version ;;
-  update) exec bash -c '\''curl -fL "https://raw.githubusercontent.com/YImu25/codex-termux/main/codex-install.sh?update=$(date +%s)" | bash'\'' ;;
+  root) root_codex ;;
+  update|update-codex) update_codex ;;
+  update-script) update_helper ;;
   help|-h|--help)
-    echo "用法：cx [menu|start|storage|version|ubuntu|update|list|use|add|key|edit]" ;;
+    echo "用法：cx [menu|start|storage|root|version|ubuntu|update-codex|update-script|list|use|add|key|edit]" ;;
   *) inner_cx "$@" ;;
 esac'
 

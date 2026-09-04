@@ -246,7 +246,12 @@ toml_set() {
 import pathlib,sys,tomlkit
 p=pathlib.Path(sys.argv[1]); d=tomlkit.parse(p.read_text() or '')
 op=sys.argv[2]
-if op=='model': d['model']=sys.argv[4]; d['model_provider']=sys.argv[3]
+if op=='model':
+ pid=sys.argv[3]
+ d['model']=sys.argv[4]; d['model_provider']=pid
+ provider=d.get('model_providers',{}).get(pid,{})
+ if pid=='tokenrhythm' or 'tokenrhythm.studio' in str(provider.get('base_url','')):
+  d['web_search']='disabled'
 elif op=='provider':
  pid,name,url,key=sys.argv[3:7]
  t=d.setdefault('model_providers',tomlkit.table()).setdefault(pid,tomlkit.table())
@@ -675,6 +680,19 @@ if [ -s "$HOME/.codex/config.toml" ]; then
 else
   printf '# Codex 配置；默认保留官方权限策略\n' >"$HOME/.codex/config.toml"
 fi
+# 基元律动的 Responses 上游不支持 Codex web_search；更新脚本时自动修复已有配置。
+python3 - "$HOME/.codex/config.toml" <<'PY'
+import pathlib,sys,tomlkit
+p=pathlib.Path(sys.argv[1]); d=tomlkit.parse(p.read_text() or '')
+pid=str(d.get('model_provider',''))
+provider=d.get('model_providers',{}).get(pid,{})
+if pid=='tokenrhythm' or 'tokenrhythm.studio' in str(provider.get('base_url','')):
+    d['web_search']='disabled'
+    tmp=p.with_suffix('.tmp')
+    tmp.write_text(tomlkit.dumps(d))
+    tomlkit.parse(tmp.read_text())
+    tmp.replace(p)
+PY
 if [ ! -e "$HOME/.codex/AGENTS.md" ]; then
   printf '# 全局指令\n\n请始终使用简体中文回复用户。\n' >"$HOME/.codex/AGENTS.md"
 fi

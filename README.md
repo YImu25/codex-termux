@@ -1,6 +1,6 @@
 # Codex CLI for Termux
 
-在 Android 的 Termux 中，通过 `proot-distro + Ubuntu` 运行官方 Codex CLI，避免直接执行 Linux ELF 时出现 `unexpected e_type: 2`。
+在 Android 的 Termux 中，通过独立的 `proot-distro + Ubuntu 22.04` 容器运行官方 Codex CLI，避免直接执行 Linux ELF 时出现 `unexpected e_type: 2`。容器名为 `codex-ubuntu`，不会删除或修改已有的 `ubuntu` 容器。
 
 ## 安装
 
@@ -74,7 +74,7 @@ rm "$PREFIX/bin/codex" "$PREFIX/bin/cx"
 完整删除 Ubuntu 容器会删除其中的 Codex、配置和数据，请先自行备份，然后执行：
 
 ```bash
-proot-distro remove ubuntu
+proot-distro remove codex-ubuntu
 ```
 
 恢复包装器备份时，找到对应的时间戳文件后执行：
@@ -85,4 +85,4 @@ cp "$PREFIX/bin/codex.bak.时间戳" "$PREFIX/bin/codex"
 cp "$PREFIX/bin/cx.bak.时间戳" "$PREFIX/bin/cx"
 ```
 
-Ubuntu 软件源的首次原始备份以 `.codex-original` 结尾；配置备份位于 `~/.codex/config.toml.bak.时间戳`。
+Ubuntu 软件源备份保存在容器内的 `/var/backups/codex-termux/`；配置备份位于 `~/.codex/config.toml.bak.时间戳`。

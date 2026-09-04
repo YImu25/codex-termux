@@ -4,7 +4,7 @@
 # 可选：CODEX_VERSION=rust-v0.153.2、CODEX_FORCE=1、NO_MIRROR=1
 set -Eeuo pipefail
 
-SCRIPT_VERSION='2026.09.04.3'
+SCRIPT_VERSION='2026.09.04.4'
 SCRIPT_RELEASE_DATE='2026-09-04'
 show_script_changelog() {
   say "${C}脚本版本：${SCRIPT_VERSION}（${SCRIPT_RELEASE_DATE}）${N}"
@@ -12,7 +12,7 @@ show_script_changelog() {
   say '  · 修复基元律动 Responses 请求携带 web_search 导致的报错'
   say '  · 切换或更新已有基元律动配置时自动关闭不受支持的联网搜索'
   say '  · 修复删除模型后仍在切换或自动获取列表中出现的问题'
-  say '  · 删除模型时同步清理重复记录并加入隐藏列表，可手动重新添加恢复'\n  say '  · 新增远程模型隐藏与恢复菜单，修复旧删除记录再次出现'
+  say '  · 删除模型时同步清理重复记录并加入隐藏列表，可手动重新添加恢复'\n  say '  · 新增远程模型隐藏与恢复菜单，修复旧删除记录再次出现'\n  say '  · 重新分组并精简主菜单、模型菜单和中转站菜单'
   say '  · 更新脚本时显示版本、日期和修复内容'
 }
 
@@ -470,25 +470,39 @@ restore_hidden_model() {
  hidden_model_store unhide "$p" "$m"
  echo "已恢复显示：$p/$m"
 }
+remove_model_menu() {
+ local n
+ while true; do
+  echo; echo '────────── 删除 / 隐藏模型 ──────────'
+  echo '  （1）删除已添加模型'
+  echo '  （2）隐藏中转站列表中的模型'
+  echo '  （0）返回'
+  read -rp '请选择 [0-2]：' n
+  case "$n" in
+   1) delete_model || true ;;
+   2) hide_remote_model || true ;;
+   0) break ;;
+   *) echo '无效选择，请重新输入。' ;;
+  esac
+ done
+}
 model_menu() {
  local n
  while true; do
   echo; echo '────────── 模型管理 ──────────'
-  echo '  （1）查看并切换已添加模型'
-  echo '  （2）为已有中转站添加模型'
-  echo '  （3）删除已添加模型'
-  echo '  （4）隐藏中转站返回的模型'
-  echo '  （5）恢复隐藏模型'
-  echo '  （6）编辑已添加模型'
-  echo '  （0）返回'
-  read -rp '请选择 [0-6]：' n
+  echo '  （1）查看 / 切换模型'
+  echo '  （2）添加模型'
+  echo '  （3）删除 / 隐藏模型'
+  echo '  （4）恢复隐藏模型'
+  echo '  （5）编辑模型'
+  echo '  （0）返回上一级'
+  read -rp '请选择 [0-5]：' n
   case "$n" in
    1) choose_model || true ;;
    2) add_existing_provider_model || true ;;
-   3) delete_model || true ;;
-   4) hide_remote_model || true ;;
-   5) restore_hidden_model || true ;;
-   6) edit_model || true ;;
+   3) remove_model_menu ;;
+   4) restore_hidden_model || true ;;
+   5) edit_model || true ;;
    0) break ;;
    *) echo '无效选择，请重新输入。' ;;
   esac
@@ -757,9 +771,9 @@ menu() {
   echo '════════════════════════════════════'
   echo '  模型与中转站管理'
   echo '════════════════════════════════════'
-  echo '  （1）切换模型'
-  echo '  （2）添加中转站 / 自动获取模型'
-  echo '  （3）修改中转站密钥'
+  echo '  （1）管理模型'
+  echo '  （2）添加中转站'
+  echo '  （3）修改 API Key'
   echo '  （4）编辑高级配置'
   echo '  （5）启动 Codex'
   echo '  （0）返回上一级'
@@ -937,14 +951,18 @@ show_menu() {
     echo "════════════════════════════════════"
     echo "  Codex Termux 助手"
     echo "════════════════════════════════════"
-    echo "  （1）启动 Codex（安全模式）"
+    echo "  ── 启动 ──"
+    echo "  （1）安全启动 Codex"
     echo "  （2）启动 Codex（读写手机存储）"
-    echo "  （3）模型、中转站与密钥管理"
-    echo "  （4）查看 Codex 版本"
-    echo "  （5）进入 Ubuntu 22.04"
-    echo "  （6）只更新 Codex 程序"
-    echo "  （7）只更新菜单脚本"
-    echo "  （8）Android Root 启动（开发者/高风险）"
+    echo "  ── 配置 ──"
+    echo "  （3）模型与中转站管理"
+    echo "  （4）进入 Ubuntu 22.04"
+    echo "  ── 更新与信息 ──"
+    echo "  （5）更新 Codex 程序"
+    echo "  （6）更新菜单脚本"
+    echo "  （7）查看版本信息"
+    echo "  ── 高级功能 ──"
+    echo "  （8）Android Root 启动（高风险）"
     echo "  （0）退出"
     echo "════════════════════════════════════"
     read -rp "请选择 [0-8]：" choice
@@ -952,10 +970,10 @@ show_menu() {
       1) safe_codex ;;
       2) storage_codex ;;
       3) inner_cx ;;
-      4) proot-distro login --isolated codex-ubuntu -- codex --version ;;
-      5) proot-distro login codex-ubuntu ;;
-      6) update_codex ;;
-      7) update_helper ;;
+      4) proot-distro login codex-ubuntu ;;
+      5) update_codex ;;
+      6) update_helper ;;
+      7) proot-distro login --isolated codex-ubuntu -- codex --version ;;
       8) root_codex ;;
       0) echo "再见"; break ;;
       *) echo "无效选择，请重新输入。" ;;

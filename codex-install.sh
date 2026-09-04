@@ -4,6 +4,16 @@
 # 可选：CODEX_VERSION=rust-v0.153.2、CODEX_FORCE=1、NO_MIRROR=1
 set -Eeuo pipefail
 
+SCRIPT_VERSION='2026.09.04.1'
+SCRIPT_RELEASE_DATE='2026-09-04'
+show_script_changelog() {
+  say "${C}脚本版本：${SCRIPT_VERSION}（${SCRIPT_RELEASE_DATE}）${N}"
+  say '本次更新提示：'
+  say '  · 修复基元律动 Responses 请求携带 web_search 导致的报错'
+  say '  · 切换或更新已有基元律动配置时自动关闭不受支持的联网搜索'
+  say '  · 更新脚本时显示版本、日期和修复内容'
+}
+
 C='\033[1;36m'; G='\033[1;32m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
 say() { printf '%b\n' "$*"; }
 die() { say "${R}错误：$*${N}" >&2; exit 1; }
@@ -863,6 +873,7 @@ install_wrapper_file cx "$wrapper_tmp"
 rm -f "$wrapper_tmp"
 
 say "${G}安装完成。${N}"
+show_script_changelog
 say '  codex       安全启动（仅容器）'
 say '  cx          打开中文功能菜单'
 say '  cx storage  主动授权后读写手机共享存储'

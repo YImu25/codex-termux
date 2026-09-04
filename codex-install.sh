@@ -290,12 +290,55 @@ install_wrapper codex '#!/data/data/com.termux/files/usr/bin/bash
 exec proot-distro login --isolated codex-ubuntu -- bash -lc '\''[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; exec codex "$@"'\'' bash "$@"'
 install_wrapper cx '#!/data/data/com.termux/files/usr/bin/bash
 # codex-termux-managed
-if [ "${1:-}" = storage ]; then
-  shift
-  [ -d "$HOME/storage/shared" ] || { echo "请先运行 termux-setup-storage 并授权"; exit 1; }
-  exec proot-distro login codex-ubuntu --bind "$HOME/storage/shared:/sdcard" -- bash -lc '\''[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; cd /sdcard; exec codex "$@"'\'' bash "$@"
-fi
-exec proot-distro login --isolated codex-ubuntu -- bash -lc '\''[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; exec cx "$@"'\'' bash "$@"'
+safe_codex() {
+  proot-distro login --isolated codex-ubuntu -- bash -lc '\''[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; exec codex "$@"'\'' bash "$@"
+}
+storage_codex() {
+  [ -d "$HOME/storage/shared" ] || { echo "请先运行 termux-setup-storage 并允许授权"; return 1; }
+  proot-distro login codex-ubuntu --bind "$HOME/storage/shared:/sdcard" -- bash -lc '\''[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; cd /sdcard; exec codex "$@"'\'' bash "$@"
+}
+inner_cx() {
+  proot-distro login --isolated codex-ubuntu -- bash -lc '\''[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; exec cx "$@"'\'' bash "$@"
+}
+show_menu() {
+  local choice
+  while true; do
+    echo
+    echo "════════════════════════════════════"
+    echo "  Codex Termux 助手"
+    echo "════════════════════════════════════"
+    echo "  1) 启动 Codex（安全模式）"
+    echo "  2) 启动 Codex（读写手机存储）"
+    echo "  3) 模型、Provider 与 API Key 管理"
+    echo "  4) 查看 Codex 版本"
+    echo "  5) 进入 Ubuntu 22.04"
+    echo "  6) 更新 Codex 与助手"
+    echo "  0) 退出"
+    echo "════════════════════════════════════"
+    read -rp "请选择 [0-6]：" choice
+    case "$choice" in
+      1) safe_codex ;;
+      2) storage_codex ;;
+      3) inner_cx ;;
+      4) proot-distro login --isolated codex-ubuntu -- codex --version ;;
+      5) proot-distro login codex-ubuntu ;;
+      6) curl -fL "https://raw.githubusercontent.com/YImu25/codex-termux/main/codex-install.sh?update=$(date +%s)" | bash ;;
+      0) echo "再见"; break ;;
+      *) echo "无效选择，请重新输入。" ;;
+    esac
+  done
+}
+case "${1:-}" in
+  ""|menu) show_menu ;;
+  start) shift; safe_codex "$@" ;;
+  storage) shift; storage_codex "$@" ;;
+  ubuntu) exec proot-distro login codex-ubuntu ;;
+  version) exec proot-distro login --isolated codex-ubuntu -- codex --version ;;
+  update) exec bash -c '\''curl -fL "https://raw.githubusercontent.com/YImu25/codex-termux/main/codex-install.sh?update=$(date +%s)" | bash'\'' ;;
+  help|-h|--help)
+    echo "用法：cx [menu|start|storage|version|ubuntu|update|list|use|add|key|edit]" ;;
+  *) inner_cx "$@" ;;
+esac'
 
 say "${G}安装完成。${N}"
 say '  codex       安全启动（仅容器）'

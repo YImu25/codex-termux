@@ -4,15 +4,15 @@
 # 可选：CODEX_VERSION=rust-v0.153.2、CODEX_FORCE=1、NO_MIRROR=1
 set -Eeuo pipefail
 
-SCRIPT_VERSION='2026.09.05.2'
+SCRIPT_VERSION='2026.09.05.3'
 SCRIPT_RELEASE_DATE='2026-09-05'
 show_script_changelog() {
   say "${C}脚本版本：${SCRIPT_VERSION}（${SCRIPT_RELEASE_DATE}）${N}"
   say '本次更新提示：'
-  say '  · 自定义中转站允许 API Key 留空，支持无鉴权接口'
-  say '  · 无 Key 时不写 env_key，也不发送 Authorization 请求头'
-  say '  · HTTP 自动获取模型同时支持有 Key与无 Key 模式'
-  say '  · 保留存储绑定、bubblewrap、模型管理和菜单优化等历史修复'
+  say '  · 未填写 API Key 时跳过联网获取模型，避免无效请求'
+  say '  · 自定义中转站无 Key 时可直接手动输入模型名称'
+  say '  · 有 Key 时继续自动获取模型列表，失败后仍可手动选择'
+  say '  · 保留 HTTP、无鉴权配置、模型管理和菜单优化等历史修复'
 }
 
 C='\033[1;36m'; G='\033[1;32m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
@@ -756,17 +756,25 @@ add_provider() {
  if [ -n "$token" ]; then
    save_key_value "$key" "$token" || { unset token; return 1; }
    echo '密钥已安全保存。'
+   echo '正在自动获取模型列表……'
+   if fetch_provider_models "$pid" "$url" "$token"; then
+     select_remote_model || { unset token; return 1; }
+     model=$SELECTED_MODEL
+   else
+     select_preset_or_manual_model "$kind" || { unset token; return 1; }
+     model=$SELECTED_MODEL
+   fi
  else
    key=''
    echo '已按无 API Key 模式配置。'
- fi
- echo '正在自动获取模型列表……'
- if fetch_provider_models "$pid" "$url" "$token"; then
-   select_remote_model || { unset token; return 1; }
-   model=$SELECTED_MODEL
- else
-   select_preset_or_manual_model "$kind" || { unset token; return 1; }
-   model=$SELECTED_MODEL
+   echo '未填写 API Key，已跳过自动获取模型列表。'
+   if [ "$kind" = 12 ]; then
+     read -rp '请手动输入模型名称：' model
+     [ -n "$model" ] || { echo '模型名称不能为空。'; unset token; return 1; }
+   else
+     select_preset_or_manual_model "$kind" || { unset token; return 1; }
+     model=$SELECTED_MODEL
+   fi
  fi
  unset token
  toml_set provider "$pid" "$name" "${url%/}" "$key"

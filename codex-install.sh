@@ -8,11 +8,16 @@ C='\033[1;36m'; G='\033[1;32m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
 say() { printf '%b\n' "$*"; }
 die() { say "${R}错误：$*${N}" >&2; exit 1; }
 stage='启动'
-tmp_outer=''
+tmp_outer=''; wrapper_tmp=''
 on_error() { local rc=$?; say "${R}失败阶段：${stage}（退出码 ${rc}）${N}" >&2; exit "$rc"; }
-cleanup() { [ -z "$tmp_outer" ] || rm -f -- "$tmp_outer"; }
+cleanup() {
+  [ -z "$tmp_outer" ] || rm -f -- "$tmp_outer"
+  [ -z "$wrapper_tmp" ] || rm -f -- "$wrapper_tmp"
+}
+on_signal() { trap - EXIT ERR INT TERM; cleanup; exit 130; }
 trap on_error ERR
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap on_signal INT TERM
 
 [ -n "${PREFIX:-}" ] || die '请在 Termux 中运行此脚本。'
 case "$(uname -m)" in
@@ -50,22 +55,36 @@ VERSION=${CODEX_VERSION:-latest}
 FORCE=${CODEX_FORCE:-0}
 CODEX_UPDATE_ONLY=${CODEX_UPDATE_ONLY:-0}
 stage='初始化'
-work=''; rollback=''; changed=0
+work=''; rollback=''; apt_log=''; cx_tmp=''; changed=0
 fail() { printf '错误：%s\n' "$*" >&2; exit 1; }
+if [ "$VERSION" != latest ] && ! [[ "$VERSION" =~ ^rust-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  fail 'CODEX_VERSION 只能是 latest 或 rust-v主版本.次版本.修订版本'
+fi
 on_error() {
   local rc=$?
   printf '安装失败：%s（退出码 %s）\n' "$stage" "$rc" >&2
   if [ "$changed" = 1 ] && [ -n "$rollback" ] && [ -d "$rollback" ]; then
     printf '正在恢复旧版组件……\n' >&2
     for n in codex codex-code-mode-host codex-app-server; do
-      [ ! -e "$rollback/$n" ] || install -m 0755 "$rollback/$n" "/usr/local/bin/$n"
+      if [ -e "$rollback/$n" ]; then
+        install -m 0755 "$rollback/$n" "/usr/local/bin/$n"
+      elif [ -e "$rollback/$n.absent" ]; then
+        rm -f "/usr/local/bin/$n"
+      fi
     done
   fi
   exit "$rc"
 }
-cleanup() { [ -z "$work" ] || rm -rf -- "$work"; [ -z "$rollback" ] || rm -rf -- "$rollback"; }
+cleanup() {
+  [ -z "$work" ] || rm -rf -- "$work"
+  [ -z "$rollback" ] || rm -rf -- "$rollback"
+  [ -z "$apt_log" ] || rm -f -- "$apt_log"
+  [ -z "$cx_tmp" ] || rm -f -- "$cx_tmp"
+}
+on_signal() { trap - EXIT ERR INT TERM; cleanup; exit 130; }
 trap on_error ERR
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap on_signal INT TERM
 
 stage='配置 Ubuntu 软件源'
 if [ "$MIRROR" = 1 ]; then
@@ -74,21 +93,31 @@ if [ "$MIRROR" = 1 ]; then
   mkdir -p "$backup_dir"
   if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
     src=/etc/apt/sources.list.d/ubuntu.sources
-    if [ -e "${src}.codex-original" ] && [ ! -e "$backup_dir/ubuntu.sources.original" ]; then
-      cp -a "${src}.codex-original" "$backup_dir/ubuntu.sources.original"
+    legacy_original="${src}.codex-original"
+    if [ -e "$legacy_original" ]; then
+      [ -e "$backup_dir/ubuntu.sources.original" ] || cp -a "$legacy_original" "$backup_dir/ubuntu.sources.original"
+      mv "$legacy_original" "$backup_dir/ubuntu.sources.legacy-original.${stamp}"
     fi
+    for legacy_backup in "${src}.bak."*; do
+      [ -e "$legacy_backup" ] || continue
+      mv "$legacy_backup" "$backup_dir/$(basename "$legacy_backup").legacy.${stamp}"
+    done
     [ -e "$backup_dir/ubuntu.sources.original" ] || cp -a "$src" "$backup_dir/ubuntu.sources.original"
-    cp -a "$src" "$backup_dir/ubuntu.sources.${stamp}"
     if [ "$APT_KIND" = ports ]; then uri='https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports'; else uri='https://mirrors.tuna.tsinghua.edu.cn/ubuntu'; fi
-    sed -E "s|^URIs:[[:space:]]+.*|URIs: $uri|" "$src" >"${src}.tmp"
-    mv "${src}.tmp" "$src"
+    if ! grep -Fq "URIs: $uri" "$src"; then
+      cp -a "$src" "$backup_dir/ubuntu.sources.${stamp}"
+      sed -E "s|^URIs:[[:space:]]+.*|URIs: $uri|" "$src" >"${src}.tmp"
+      mv "${src}.tmp" "$src"
+    fi
   elif [ -f /etc/apt/sources.list ]; then
     src=/etc/apt/sources.list
     [ -e "$backup_dir/sources.list.original" ] || cp -a "$src" "$backup_dir/sources.list.original"
-    cp -a "$src" "$backup_dir/sources.list.${stamp}"
     if [ "$APT_KIND" = ports ]; then uri='https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports'; else uri='https://mirrors.tuna.tsinghua.edu.cn/ubuntu'; fi
-    sed -E "s|https?://[^ ]+/ubuntu(-ports)?|$uri|g" "$src" >"${src}.tmp"
-    mv "${src}.tmp" "$src"
+    if ! grep -Fq "$uri" "$src"; then
+      cp -a "$src" "$backup_dir/sources.list.${stamp}"
+      sed -E "s|https?://[^ ]+/ubuntu(-ports)?|$uri|g" "$src" >"${src}.tmp"
+      mv "${src}.tmp" "$src"
+    fi
   fi
 fi
 
@@ -168,6 +197,8 @@ with tarfile.open(sys.argv[1],'r:gz') as t:
   p=pathlib.PurePosixPath(m.name)
   if p.is_absolute() or '..' in p.parts or m.issym() or m.islnk():
    raise SystemExit('压缩包包含不安全路径或链接：'+m.name)
+  if not (m.isfile() or m.isdir()):
+   raise SystemExit('压缩包包含不允许的特殊文件：'+m.name)
 PY
     mkdir -p "$work/unpack"; rm -rf "$work/unpack"/*
     tar -xzf "$archive" --no-same-owner -C "$work/unpack"
@@ -178,7 +209,13 @@ PY
   "$work/stage/codex" --version | grep -F "${tag#rust-v}" >/dev/null || fail 'Codex 自检版本与 Release 不一致。'
   stage='原子替换组件'
   rollback=$(mktemp -d)
-  for n in codex codex-code-mode-host codex-app-server; do [ ! -e "/usr/local/bin/$n" ] || cp -a "/usr/local/bin/$n" "$rollback/$n"; done
+  for n in codex codex-code-mode-host codex-app-server; do
+    if [ -e "/usr/local/bin/$n" ]; then
+      cp -a "/usr/local/bin/$n" "$rollback/$n"
+    else
+      : >"$rollback/$n.absent"
+    fi
+  done
   changed=1
   for n in codex codex-code-mode-host codex-app-server; do install -m 0755 "$work/stage/$n" "/usr/local/bin/.${n}.new"; mv -f "/usr/local/bin/.${n}.new" "/usr/local/bin/$n"; done
   mkdir -p /usr/local/share/codex-termux
@@ -223,7 +260,7 @@ PY
 }
 use_model() {
  local spec=${1:-} p m
- [[ "$spec" == */* ]] || { echo '格式：cx use <provider>/<model>'; return 1; }
+ [[ "$spec" == */* ]] || { echo '格式：cx use <中转站代号>/<模型名称>'; return 1; }
  p=${spec%%/*}; m=${spec#*/}
  [[ "$p" =~ ^[A-Za-z0-9_-]+$ ]] || { echo '中转站代号只能包含英文字母、数字、下划线和短横线'; return 1; }
  [ -n "$m" ] && [[ "$m" != *$'\n'* ]] || { echo '模型名无效'; return 1; }
@@ -234,15 +271,16 @@ add_provider() {
  echo '提示：中转站必须支持 /v1/responses 接口。'
  read -rp '中转站代号（例如：myrelay）：' pid
  [[ "$pid" =~ ^[A-Za-z0-9_-]+$ ]] || { echo '代号只能包含英文字母、数字、下划线和短横线'; return 1; }
+ case "$pid" in openai|ollama|lmstudio) echo '该代号由 Codex 保留，请换一个中转站代号'; return 1;; esac
  read -rp '中转站名称（可填中文）：' name; [ -n "$name" ] || return 1
  read -rp '接口地址（例如：https://example.com/v1）：' url
  [[ "$url" =~ ^https:// ]] || [[ "$url" =~ ^http://(localhost|127\.0\.0\.1)([:/]|$) ]] || { echo '接口地址必须以 https:// 开头；本机地址可以使用 http://'; return 1; }
  read -rp '模型名称（必须与中转站提供的一致）：' model; [ -n "$model" ] || return 1
- key=$(printf '%s_API_KEY' "$pid" | tr '[:lower:]-' '[:upper:]_')
+ key=$(printf 'CODEX_%s_API_KEY' "$pid" | tr '[:lower:]-' '[:upper:]_')
+ echo '现在请输入该中转站的密钥。'
+ set_key "$key" || return 1
  toml_set provider "$pid" "$name" "$url" "$key"
  use_model "$pid/$model"
- echo '现在请输入该中转站的密钥。'
- set_key "$key"
 }
 set_key() {
  local key=${1:-} value tmp
@@ -251,8 +289,11 @@ set_key() {
  fi
  [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo '密钥变量名称无效'; return 1; }
  read -rsp '中转站密钥（输入时不会显示）：' value; echo
+ [ -n "$value" ] || { echo '密钥不能为空'; return 1; }
  tmp=$(mktemp "${ENVF}.XXXXXX")
- [ ! -f "$ENVF" ] || grep -vE "^export ${key}=" "$ENVF" >"$tmp"
+ if [ -f "$ENVF" ]; then
+   grep -vE "^export ${key}=" "$ENVF" >"$tmp" || true
+ fi
  printf 'export %s=%q\n' "$key" "$value" >>"$tmp"; chmod 600 "$tmp"; mv "$tmp" "$ENVF"
  unset value; echo "密钥已安全保存。"
 }
@@ -273,9 +314,9 @@ menu() {
   echo '════════════════════════════════════'
   read -rp '请选择 [0-5]：' n
   case "$n" in
-   1) read -rp '请输入“中转站代号/模型名称”：' s; use_model "$s" ;;
-   2) add_provider ;;
-   3) set_key ;;
+   1) read -rp '请输入“中转站代号/模型名称”：' s; use_model "$s" || true ;;
+   2) add_provider || true ;;
+   3) set_key || true ;;
    4) "${EDITOR:-vi}" "$CFG" ;;
    5) exec codex ;;
    0) break ;;
@@ -381,9 +422,31 @@ root_codex() {
   echo '正在以 Android Root 权限启动 Codex……'
   tsu -c "$root_command"
 }
-update_codex() {
-  curl -fL "https://raw.githubusercontent.com/YImu25/codex-termux/main/codex-install.sh?codex-update=$(date +%s)" | CODEX_UPDATE_ONLY=1 bash
+run_installer_update() {
+  local mode=$1 version=${2:-} installer rc
+  installer=$(mktemp)
+  curl --proto '=https' --tlsv1.2 -fsSL --retry 3 --connect-timeout 20 \
+    "https://raw.githubusercontent.com/YImu25/codex-termux/main/codex-install.sh?update=$(date +%s)" \
+    -o "$installer"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    rm -f "$installer"
+    return "$rc"
+  fi
+  if ! bash -n "$installer"; then
+    echo '下载到的安装脚本语法检查失败，已取消执行。'
+    rm -f "$installer"
+    return 1
+  fi
+  if [ "$mode" = codex ]; then
+    CODEX_UPDATE_ONLY=1 bash "$installer"; rc=$?
+  else
+    CODEX_VERSION="$version" bash "$installer"; rc=$?
+  fi
+  rm -f "$installer"
+  return "$rc"
 }
+update_codex() { run_installer_update codex; }
 update_helper() {
   local installed_version
   installed_version=$(proot-distro login --isolated codex-ubuntu -- cat /usr/local/share/codex-termux/release 2>/dev/null) || {
@@ -391,7 +454,7 @@ update_helper() {
     return 1
   }
   echo "保持 Codex 版本 $installed_version 不变，仅更新菜单脚本。"
-  curl -fL "https://raw.githubusercontent.com/YImu25/codex-termux/main/codex-install.sh?script-update=$(date +%s)" | CODEX_VERSION="$installed_version" bash
+  run_installer_update script "$installed_version"
 }
 show_menu() {
   local choice
@@ -446,4 +509,5 @@ say "${G}安装完成。${N}"
 say '  codex       安全启动（仅容器）'
 say '  cx          打开中文功能菜单'
 say '  cx storage  主动授权后读写手机共享存储'
-say "${Y}本脚本不启用 Android/Magisk root，也不默认写入 danger-full-access。${N}"
+say "${Y}默认不启用 Android/Magisk Root；仅在菜单明确确认后启动 Root 模式。${N}"
+say "${Y}默认不写入 danger-full-access。${N}"

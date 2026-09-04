@@ -204,7 +204,7 @@ if op=='model': d['model']=sys.argv[4]; d['model_provider']=sys.argv[3]
 elif op=='provider':
  pid,name,url,key=sys.argv[3:7]
  t=d.setdefault('model_providers',tomlkit.table()).setdefault(pid,tomlkit.table())
- t['name']=name; t['base_url']=url; t['env_key']=key
+ t['name']=name; t['base_url']=url; t['env_key']=key; t['wire_api']='responses'
 tmp=p.with_suffix('.tmp'); tmp.write_text(tomlkit.dumps(d)); tomlkit.parse(tmp.read_text()); tmp.replace(p)
 PY
 }
@@ -219,31 +219,39 @@ use_model() {
  local spec=${1:-} p m
  [[ "$spec" == */* ]] || { echo '格式：cx use <provider>/<model>'; return 1; }
  p=${spec%%/*}; m=${spec#*/}
- [[ "$p" =~ ^[A-Za-z0-9_-]+$ ]] || { echo 'Provider ID 只能含英文、数字、_、-'; return 1; }
+ [[ "$p" =~ ^[A-Za-z0-9_-]+$ ]] || { echo '中转站代号只能包含英文字母、数字、下划线和短横线'; return 1; }
  [ -n "$m" ] && [[ "$m" != *$'\n'* ]] || { echo '模型名无效'; return 1; }
  toml_set model "$p" "$m"; echo "已切换：$p/$m"
 }
 add_provider() {
  local pid name url key model
- read -rp 'Provider ID：' pid; [[ "$pid" =~ ^[A-Za-z0-9_-]+$ ]] || { echo 'ID 无效'; return 1; }
- read -rp '显示名：' name; [ -n "$name" ] || return 1
- read -rp 'Base URL：' url
- [[ "$url" =~ ^https:// ]] || [[ "$url" =~ ^http://(localhost|127\.0\.0\.1)([:/]|$) ]] || { echo '仅允许 HTTPS；localhost 可使用 HTTP'; return 1; }
- read -rp 'API Key 环境变量名：' key; [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo '环境变量名无效'; return 1; }
- read -rp '默认模型名：' model; [ -n "$model" ] || return 1
- toml_set provider "$pid" "$name" "$url" "$key"; use_model "$pid/$model"
+ echo '提示：中转站必须支持 /v1/responses 接口。'
+ read -rp '中转站代号（例如：myrelay）：' pid
+ [[ "$pid" =~ ^[A-Za-z0-9_-]+$ ]] || { echo '代号只能包含英文字母、数字、下划线和短横线'; return 1; }
+ read -rp '中转站名称（可填中文）：' name; [ -n "$name" ] || return 1
+ read -rp '接口地址（例如：https://example.com/v1）：' url
+ [[ "$url" =~ ^https:// ]] || [[ "$url" =~ ^http://(localhost|127\.0\.0\.1)([:/]|$) ]] || { echo '接口地址必须以 https:// 开头；本机地址可以使用 http://'; return 1; }
+ read -rp '模型名称（必须与中转站提供的一致）：' model; [ -n "$model" ] || return 1
+ key=$(printf '%s_API_KEY' "$pid" | tr '[:lower:]-' '[:upper:]_')
+ toml_set provider "$pid" "$name" "$url" "$key"
+ use_model "$pid/$model"
+ echo '现在请输入该中转站的密钥。'
+ set_key "$key"
 }
 set_key() {
- local key value tmp
- read -rp '环境变量名：' key; [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo '环境变量名无效'; return 1; }
- read -rsp 'API Key（不会回显）：' value; echo
+ local key=${1:-} value tmp
+ if [ -z "$key" ]; then
+   read -rp '密钥变量名称：' key
+ fi
+ [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo '密钥变量名称无效'; return 1; }
+ read -rsp '中转站密钥（输入时不会显示）：' value; echo
  tmp=$(mktemp "${ENVF}.XXXXXX")
  [ ! -f "$ENVF" ] || grep -vE "^export ${key}=" "$ENVF" >"$tmp"
  printf 'export %s=%q\n' "$key" "$value" >>"$tmp"; chmod 600 "$tmp"; mv "$tmp" "$ENVF"
- unset value; echo "已安全保存到 $ENVF"
+ unset value; echo "密钥已安全保存。"
 }
-menu() { while true; do echo; list; printf '\n1) 切换模型  2) 添加 Provider  3) 设置 Key  4) 编辑配置  5) 启动  0) 退出\n'; read -rp '请选择：' n; case "$n" in 1) read -rp 'provider/model：' s; use_model "$s";; 2) add_provider;; 3) set_key;; 4) "${EDITOR:-vi}" "$CFG";; 5) exec codex;; 0) break;; esac; done; }
-case ${1:-menu} in menu) menu;; list) list;; use) use_model "${2:-}";; add) add_provider;; key) set_key;; edit) exec "${EDITOR:-vi}" "$CFG";; *) echo '用法：cx [list|use p/model|add|key|edit]'; exit 1;; esac
+menu() { while true; do echo; list; printf '\n1) 切换模型  2) 添加中转站  3) 修改中转站密钥  4) 编辑高级配置  5) 启动 Codex  0) 返回\n'; read -rp '请选择：' n; case "$n" in 1) read -rp '请输入“中转站代号/模型名称”：' s; use_model "$s";; 2) add_provider;; 3) set_key;; 4) "${EDITOR:-vi}" "$CFG";; 5) exec codex;; 0) break;; *) echo '无效选择，请重新输入。';; esac; done; }
+case ${1:-menu} in menu) menu;; list) list;; use) use_model "${2:-}";; add) add_provider;; key) set_key;; edit) exec "${EDITOR:-vi}" "$CFG";; *) echo '可用命令：cx list（查看）、cx use（切换）、cx add（添加）、cx key（密钥）、cx edit（高级配置）'; exit 1;; esac
 CX
 chmod 0755 "$cx_tmp"; mv -f "$cx_tmp" /usr/local/bin/cx
 
@@ -309,7 +317,7 @@ show_menu() {
     echo "════════════════════════════════════"
     echo "  1) 启动 Codex（安全模式）"
     echo "  2) 启动 Codex（读写手机存储）"
-    echo "  3) 模型、Provider 与 API Key 管理"
+    echo "  3) 模型、中转站与密钥管理"
     echo "  4) 查看 Codex 版本"
     echo "  5) 进入 Ubuntu 22.04"
     echo "  6) 更新 Codex 与助手"

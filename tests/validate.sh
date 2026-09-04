@@ -38,8 +38,8 @@ grep -Fq "wire_api']='responses'" "$work/cx-inner.sh"
 grep -Fq "d['web_search']='disabled'" "$work/cx-inner.sh"
 grep -Fq "d['web_search']='disabled'" "$work/ubuntu.sh"
 grep -Fq "'tokenrhythm.studio' in str(provider.get('base_url',''))" "$work/cx-inner.sh"
-grep -Fq '查看并切换已添加模型' "$work/cx-inner.sh"
-grep -Fq '编辑已添加模型' "$work/cx-inner.sh"
+grep -Fq '查看 / 切换模型' "$work/cx-inner.sh"
+grep -Fq '编辑模型' "$work/cx-inner.sh"
 grep -Fq '删除已添加模型' "$work/cx-inner.sh"
 grep -Fq '不能删除当前正在使用的模型' "$work/cx-inner.sh"
 grep -Fq '为已有中转站添加模型' "$work/cx-inner.sh"
@@ -47,14 +47,19 @@ grep -Fq '可选预设模型' "$work/cx-inner.sh"
 grep -Fq '请选择中转站' "$work/cx-inner.sh"
 grep -Fq 'models.tsv' "$work/cx-inner.sh"
 grep -Fq '默认不写入 danger-full-access' "$script"
-grep -Fq "SCRIPT_VERSION='2026.09.04.3'" "$script"
+grep -Fq "SCRIPT_VERSION='2026.09.04.4'" "$script"
 grep -Fq '本次更新提示：' "$script"
 grep -Fq 'show_script_changelog' "$script"
 grep -Fq 'hidden-models.tsv' "$work/cx-inner.sh"
 grep -Fq 'mid not in hidden' "$work/cx-inner.sh"
 grep -Fq 'model_store delete "$p" "$m"' "$work/cx-inner.sh"
-grep -Fq '隐藏中转站返回的模型' "$work/cx-inner.sh"
+grep -Fq '隐藏中转站列表中的模型' "$work/cx-inner.sh"
 grep -Fq '恢复隐藏模型' "$work/cx-inner.sh"
+grep -Fq '删除 / 隐藏模型' "$work/cx-inner.sh"
+grep -Fq '── 启动 ──' "$work/cx-wrapper.sh"
+grep -Fq '── 配置 ──' "$work/cx-wrapper.sh"
+grep -Fq '── 更新与信息 ──' "$work/cx-wrapper.sh"
+grep -Fq '── 高级功能 ──' "$work/cx-wrapper.sh"
 grep -Fq 'fetch_provider_models "$pid" "$url" "$token"' "$work/cx-inner.sh"
 [ -s "$root/CHANGELOG.md" ]
 
@@ -67,7 +72,7 @@ grep -Fq 'export TEST_API_KEY=second' "$test_home/.config/codex/env"
 [ "$(stat -c '%a' "$test_home/.config/codex/env")" = 600 ]
 
 printf 'relay\tdeleted-model\nrelay\tkept-model\nrelay\tdeleted-model\n' >"$test_home/.config/codex/models.tsv"
-printf '1\n3\n1\ny\n0\n0\n' | HOME="$test_home" bash "$work/cx-inner.sh" >/dev/null
+printf '1\n3\n1\n1\ny\n0\n0\n0\n' | HOME="$test_home" bash "$work/cx-inner.sh" >/dev/null
 deleted_row=$(printf 'relay\tdeleted-model')
 kept_row=$(printf 'relay\tkept-model')
 ! grep -Fq "$deleted_row" "$test_home/.config/codex/models.tsv"

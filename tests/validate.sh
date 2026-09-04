@@ -47,6 +47,10 @@ grep -Fq '可选预设模型' "$work/cx-inner.sh"
 grep -Fq '请选择中转站' "$work/cx-inner.sh"
 grep -Fq 'models.tsv' "$work/cx-inner.sh"
 grep -Fq '默认不写入 danger-full-access' "$script"
+grep -Fq "SCRIPT_VERSION='2026.09.04.1'" "$script"
+grep -Fq '本次更新提示：' "$script"
+grep -Fq 'show_script_changelog' "$script"
+[ -s "$root/CHANGELOG.md" ]
 
 test_home="$work/home"
 mkdir -p "$test_home"

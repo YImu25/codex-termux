@@ -120,20 +120,23 @@ if [ "$VERSION" = latest ]; then release_api='https://api.github.com/repos/opena
 curl --proto '=https' --tlsv1.2 -fsSL --retry 3 --connect-timeout 20 \
   "$release_api" -o "$api"
 meta_file="$work/release-meta.txt"
-python3 - "$api" "$TARGET" >"$meta_file" <<'PY'
+printf 'Release 元数据：%s 字节\n' "$(wc -c <"$api")"
+python3 -c '
 import json,sys
 d=json.load(open(sys.argv[1])); target=sys.argv[2]
-if d.get('draft') or d.get('prerelease'): raise SystemExit('拒绝安装草稿或预发布版本')
-print(d['tag_name'])
-for prefix in ('codex','codex-code-mode-host','codex-app-server'):
-    name=f'{prefix}-{target}.tar.gz'
-    a=next((x for x in d.get('assets',[]) if x.get('name')==name),None)
-    if not a or not str(a.get('digest','')).startswith('sha256:'):
-        raise SystemExit(f'官方 Release 缺少资产或 SHA-256：{name}')
-    print('\t'.join((prefix,name,a['browser_download_url'],a['digest'][7:])))
-PY
+if d.get("draft") or d.get("prerelease"):
+    raise SystemExit("拒绝安装草稿或预发布版本")
+print(d["tag_name"])
+for prefix in ("codex","codex-code-mode-host","codex-app-server"):
+    name=f"{prefix}-{target}.tar.gz"
+    asset=next((x for x in d.get("assets",[]) if x.get("name")==name),None)
+    if not asset or not str(asset.get("digest","")).startswith("sha256:"):
+        raise SystemExit("官方 Release 缺少资产或 SHA-256："+name)
+    print("\t".join((prefix,name,asset["browser_download_url"],asset["digest"][7:])))
+' "$api" "$TARGET" >"$meta_file" || fail 'Release JSON 解析失败。'
 readarray -t meta <"$meta_file"
 tag=${meta[0]:-}; [ -n "$tag" ] || fail '无法解析官方版本。'
+printf '已解析官方版本：%s（%s 个组件）\n' "$tag" "$((${#meta[@]} - 1))"
 
 current=''
 [ ! -f /usr/local/share/codex-termux/release ] || current=$(cat /usr/local/share/codex-termux/release)

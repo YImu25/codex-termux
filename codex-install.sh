@@ -363,14 +363,14 @@ model_menu() {
  while true; do
   echo; echo '────────── 切换与管理模型 ──────────'
   echo '  （1）查看并切换已添加的模型'
-  echo '  （2）手动添加并切换模型'
+  echo '  （2）为已有中转站添加模型'
   echo '  （3）编辑已添加的模型'
   echo '  （4）删除已添加的模型'
   echo '  （0）返回'
   read -rp '请选择 [0-4]：' n
   case "$n" in
    1) choose_model || true ;;
-   2) read -rp '请输入“中转站代号/模型名称”：' s; use_model "$s" || true ;;
+   2) add_existing_provider_model || true ;;
    3) edit_model || true ;;
    4) delete_model || true ;;
    0) break ;;
@@ -391,7 +391,7 @@ save_key_value() {
 }
 REMOTE_MODELS=()
 fetch_provider_models() {
- local url=$1 token=$2 tmp
+ local url=$1 token=$2 tmp parsed
  REMOTE_MODELS=()
  tmp=$(mktemp)
  if ! curl --proto '=https' --tlsv1.2 -fsS --retry 2 --connect-timeout 15 --max-time 30 \
@@ -401,7 +401,8 @@ fetch_provider_models() {
    echo '自动获取模型列表失败，将改为手动输入模型名称。'
    return 1
  fi
- mapfile -t REMOTE_MODELS < <(python3 - "$tmp" <<'PY'
+ parsed="${tmp}.models"
+ if ! python3 - "$tmp" >"$parsed" <<'PY'
 import json,sys
 try:
     d=json.load(open(sys.argv[1]))
@@ -415,13 +416,75 @@ for item in items:
         if isinstance(mid,str) and mid and mid not in seen and '\n' not in mid and '\t' not in mid:
             seen.add(mid); print(mid)
 PY
- )
- rm -f "$tmp"
+ then
+   rm -f "$tmp" "$parsed"
+   echo '模型列表不是有效的 JSON，将改为手动输入。'
+   return 1
+ fi
+ mapfile -t REMOTE_MODELS <"$parsed"
+ rm -f "$tmp" "$parsed"
  [ "${#REMOTE_MODELS[@]}" -gt 0 ] || {
    echo '接口已响应，但没有解析到标准 OpenAI /v1/models 列表，将改为手动输入。'
    return 1
  }
  return 0
+}
+load_key_value() {
+ local key=$1
+ [ -f "$ENVF" ] || return 1
+ python3 - "$ENVF" "$key" <<'PY'
+import shlex,sys
+name=sys.argv[2]
+for line in open(sys.argv[1]):
+    line=line.strip()
+    if not line.startswith('export '+name+'='): continue
+    raw=line.split('=',1)[1]
+    try: print(shlex.split(raw)[0] if raw else '')
+    except Exception: raise SystemExit(1)
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+list_providers() {
+ python3 - "$CFG" <<'PY'
+import sys,tomlkit
+d=tomlkit.parse(open(sys.argv[1]).read() or '')
+for i,(pid,p) in enumerate(d.get('model_providers',{}).items(),1):
+ print(f'  （{i}）{p.get("name",pid)} [{pid}]')
+PY
+}
+get_provider_row() {
+ python3 - "$CFG" "$1" <<'PY'
+import sys,tomlkit
+d=tomlkit.parse(open(sys.argv[1]).read() or ''); ps=list(d.get('model_providers',{}).items())
+try: pid,p=ps[int(sys.argv[2])-1]
+except (ValueError,IndexError): raise SystemExit(2)
+print('\t'.join((str(pid),str(p.get('name',pid)),str(p.get('base_url','')),str(p.get('env_key','')))))
+PY
+}
+add_existing_provider_model() {
+ local n row pid name url key token model
+ echo; echo '────────── 选择已有中转站 ──────────'
+ list_providers
+ echo '  （0）返回'
+ read -rp '请选择中转站：' n; [ "$n" = 0 ] && return 0
+ row=$(get_provider_row "$n") || { echo '无效序号。'; return 1; }
+ IFS=$'\t' read -r pid name url key <<<"$row"
+ token=$(load_key_value "$key") || {
+   echo "尚未保存 $name 的 API Key。"
+   read -rsp '请输入 API Key（输入时不会显示，粘贴后按回车）：' token; echo
+   [ -n "$token" ] || { echo 'API Key 不能为空。'; return 1; }
+   save_key_value "$key" "$token" || return 1
+ }
+ echo '正在自动获取模型列表……'
+ if fetch_provider_models "$url" "$token"; then
+   select_remote_model || { unset token; return 1; }; model=$SELECTED_MODEL
+ else
+   read -rp '请输入模型名称（例如 gpt-5.2-codex）：' model
+ fi
+ unset token
+ [ -n "$model" ] || { echo '模型名称不能为空。'; return 1; }
+ use_model "$pid/$model"
 }
 select_remote_model() {
  local n i
@@ -459,6 +522,31 @@ set_provider_preset() {
    11) PRESET_PID='siliconflow'; PRESET_NAME='硅基流动 SiliconFlow'; PRESET_URL='https://api.siliconflow.cn/v1'; PRESET_OK=0; PRESET_WARN='硅基流动是否支持 Codex 所需 Responses API 请以当前服务端能力为准。' ;;
    *) return 1 ;;
  esac
+}
+preset_models() {
+ case "$1" in
+   1) printf '%s\n' 'gpt-5.2-codex' 'gpt-5.1-codex-max' 'gpt-5.1-codex-mini' ;;
+   2) printf '%s\n' 'gpt-5.2-codex' 'gpt-5.1-codex-max' 'gpt-5.1-codex-mini' ;;
+   3) printf '%s\n' 'deepseek-chat' 'deepseek-reasoner' ;;
+   5) printf '%s\n' 'gemini-2.5-pro' 'gemini-2.5-flash' ;;
+   6|7) printf '%s\n' 'qwen3-coder-plus' 'qwen3-max' 'qwen-plus' ;;
+   8) printf '%s\n' 'glm-4.5' 'glm-4.5-air' ;;
+   9) printf '%s\n' 'kimi-k2-0905-preview' 'kimi-k2-turbo-preview' ;;
+   10) printf '%s\n' 'MiniMax-M2.1' 'MiniMax-M2.1-lightning' ;;
+   11) printf '%s\n' 'deepseek-ai/DeepSeek-V3.2' 'Qwen/Qwen3-Coder-480B-A35B-Instruct' ;;
+ esac
+}
+select_preset_or_manual_model() {
+ local kind=$1 n i tmp; local -a choices=()
+ tmp=$(mktemp); preset_models "$kind" >"$tmp"; mapfile -t choices <"$tmp"; rm -f "$tmp"
+ echo; echo '可选预设模型（服务商可能会调整名称，请以实际接口为准）：'
+ for i in "${!choices[@]}"; do printf '  （%d）%s\n' "$((i+1))" "${choices[$i]}"; done
+ echo '  （0）手动输入其他模型名称'
+ read -rp "请选择 [0-${#choices[@]}]：" n
+ if [ "$n" = 0 ]; then read -rp '模型名称：' SELECTED_MODEL
+ elif [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -le "${#choices[@]}" ]; then SELECTED_MODEL=${choices[$((n-1))]}
+ else echo '无效选择。'; return 1; fi
+ [ -n "$SELECTED_MODEL" ] || { echo '模型名称不能为空。'; return 1; }
 }
 add_provider() {
  local kind pid name url key token model answer
@@ -503,8 +591,8 @@ add_provider() {
    fi
  fi
  key=$(printf 'CODEX_%s_API_KEY' "$pid" | tr '[:lower:]-' '[:upper:]_')
- echo '请输入该服务的 API Key。'
- read -rsp '密钥（输入时不会显示）：' token; echo
+ echo '请输入该服务的 API Key（粘贴时屏幕不会显示字符，这是正常的）。'
+ read -rsp 'API Key（粘贴后按回车）：' token; echo
  [ -n "$token" ] || { echo '密钥不能为空。'; return 1; }
  save_key_value "$key" "$token" || { unset token; return 1; }
  echo '密钥已安全保存，正在自动获取模型列表……'
@@ -512,8 +600,8 @@ add_provider() {
    select_remote_model || { unset token; return 1; }
    model=$SELECTED_MODEL
  else
-   read -rp '模型名称（必须与服务商提供的一致）：' model
-   [ -n "$model" ] || { unset token; return 1; }
+   select_preset_or_manual_model "$kind" || { unset token; return 1; }
+   model=$SELECTED_MODEL
  fi
  unset token
  toml_set provider "$pid" "$name" "${url%/}" "$key"
@@ -522,12 +610,20 @@ add_provider() {
  [ "$kind" = 1 ] && echo 'TokenRhythm：请选择其文档中标注支持 Responses API 的模型。'
 }
 set_key() {
- local key=${1:-} value
+ local key=${1:-} value n row provider_count
  if [ -z "$key" ]; then
-   read -rp '密钥变量名称：' key
+   provider_count=$(list_providers | wc -l)
+   if [ "$provider_count" -gt 0 ]; then
+     echo; echo '────────── 修改中转站 API Key ──────────'; list_providers; echo '  （0）返回'
+     read -rp '请选择中转站：' n; [ "$n" = 0 ] && return 0
+     row=$(get_provider_row "$n") || { echo '无效序号。'; return 1; }
+     IFS=$'\t' read -r _ _ _ key <<<"$row"
+   else
+     read -rp '密钥变量名称：' key
+   fi
  fi
  [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo '密钥变量名称无效'; return 1; }
- read -rsp '中转站密钥（输入时不会显示）：' value; echo
+ read -rsp '新 API Key（输入时不会显示，粘贴后按回车）：' value; echo
  save_key_value "$key" "$value" || { unset value; return 1; }
  unset value; echo '密钥已安全保存。'
 }

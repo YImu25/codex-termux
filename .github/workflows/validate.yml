@@ -1,0 +1,19 @@
+name: 校验安装脚本
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 获取代码
+        uses: actions/checkout@v4
+      - name: 运行回归检查
+        run: bash tests/validate.sh

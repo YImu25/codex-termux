@@ -119,7 +119,8 @@ api="$work/release.json"
 if [ "$VERSION" = latest ]; then release_api='https://api.github.com/repos/openai/codex/releases/latest'; else release_api="https://api.github.com/repos/openai/codex/releases/tags/$VERSION"; fi
 curl --proto '=https' --tlsv1.2 -fsSL --retry 3 --connect-timeout 20 \
   "$release_api" -o "$api"
-readarray -t meta < <(python3 - "$api" "$TARGET" <<'PY'
+meta_file="$work/release-meta.txt"
+python3 - "$api" "$TARGET" >"$meta_file" <<'PY'
 import json,sys
 d=json.load(open(sys.argv[1])); target=sys.argv[2]
 if d.get('draft') or d.get('prerelease'): raise SystemExit('拒绝安装草稿或预发布版本')
@@ -131,7 +132,7 @@ for prefix in ('codex','codex-code-mode-host','codex-app-server'):
         raise SystemExit(f'官方 Release 缺少资产或 SHA-256：{name}')
     print('\t'.join((prefix,name,a['browser_download_url'],a['digest'][7:])))
 PY
-)
+readarray -t meta <"$meta_file"
 tag=${meta[0]:-}; [ -n "$tag" ] || fail '无法解析官方版本。'
 
 current=''

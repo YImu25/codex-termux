@@ -250,7 +250,33 @@ set_key() {
  printf 'export %s=%q\n' "$key" "$value" >>"$tmp"; chmod 600 "$tmp"; mv "$tmp" "$ENVF"
  unset value; echo "密钥已安全保存。"
 }
-menu() { while true; do echo; list; printf '\n1) 切换模型  2) 添加中转站  3) 修改中转站密钥  4) 编辑高级配置  5) 启动 Codex  0) 返回\n'; read -rp '请选择：' n; case "$n" in 1) read -rp '请输入“中转站代号/模型名称”：' s; use_model "$s";; 2) add_provider;; 3) set_key;; 4) "${EDITOR:-vi}" "$CFG";; 5) exec codex;; 0) break;; *) echo '无效选择，请重新输入。';; esac; done; }
+menu() {
+ while true; do
+  echo
+  list
+  echo
+  echo '════════════════════════════════════'
+  echo '  模型与中转站管理'
+  echo '════════════════════════════════════'
+  echo '  （1）切换模型'
+  echo '  （2）添加中转站'
+  echo '  （3）修改中转站密钥'
+  echo '  （4）编辑高级配置'
+  echo '  （5）启动 Codex'
+  echo '  （0）返回上一级'
+  echo '════════════════════════════════════'
+  read -rp '请选择 [0-5]：' n
+  case "$n" in
+   1) read -rp '请输入“中转站代号/模型名称”：' s; use_model "$s" ;;
+   2) add_provider ;;
+   3) set_key ;;
+   4) "${EDITOR:-vi}" "$CFG" ;;
+   5) exec codex ;;
+   0) break ;;
+   *) echo '无效选择，请重新输入。' ;;
+  esac
+ done
+}
 case ${1:-menu} in menu) menu;; list) list;; use) use_model "${2:-}";; add) add_provider;; key) set_key;; edit) exec "${EDITOR:-vi}" "$CFG";; *) echo '可用命令：cx list（查看）、cx use（切换）、cx add（添加）、cx key（密钥）、cx edit（高级配置）'; exit 1;; esac
 CX
 chmod 0755 "$cx_tmp"; mv -f "$cx_tmp" /usr/local/bin/cx
@@ -315,13 +341,13 @@ show_menu() {
     echo "════════════════════════════════════"
     echo "  Codex Termux 助手"
     echo "════════════════════════════════════"
-    echo "  1) 启动 Codex（安全模式）"
-    echo "  2) 启动 Codex（读写手机存储）"
-    echo "  3) 模型、中转站与密钥管理"
-    echo "  4) 查看 Codex 版本"
-    echo "  5) 进入 Ubuntu 22.04"
-    echo "  6) 更新 Codex 与助手"
-    echo "  0) 退出"
+    echo "  （1）启动 Codex（安全模式）"
+    echo "  （2）启动 Codex（读写手机存储）"
+    echo "  （3）模型、中转站与密钥管理"
+    echo "  （4）查看 Codex 版本"
+    echo "  （5）进入 Ubuntu 22.04"
+    echo "  （6）更新 Codex 与助手"
+    echo "  （0）退出"
     echo "════════════════════════════════════"
     read -rp "请选择 [0-6]：" choice
     case "$choice" in

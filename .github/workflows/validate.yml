@@ -15,5 +15,7 @@ jobs:
     steps:
       - name: 获取代码
         uses: actions/checkout@v4
+      - name: 安装测试依赖
+        run: python3 -m pip install --disable-pip-version-check tomlkit
       - name: 运行回归检查
         run: bash tests/validate.sh

@@ -4,13 +4,15 @@
 # 可选：CODEX_VERSION=rust-v0.153.2、CODEX_FORCE=1、NO_MIRROR=1
 set -Eeuo pipefail
 
-SCRIPT_VERSION='2026.09.04.1'
+SCRIPT_VERSION='2026.09.04.2'
 SCRIPT_RELEASE_DATE='2026-09-04'
 show_script_changelog() {
   say "${C}脚本版本：${SCRIPT_VERSION}（${SCRIPT_RELEASE_DATE}）${N}"
   say '本次更新提示：'
   say '  · 修复基元律动 Responses 请求携带 web_search 导致的报错'
   say '  · 切换或更新已有基元律动配置时自动关闭不受支持的联网搜索'
+  say '  · 修复删除模型后仍在切换或自动获取列表中出现的问题'
+  say '  · 删除模型时同步清理重复记录并加入隐藏列表，可手动重新添加恢复'
   say '  · 更新脚本时显示版本、日期和修复内容'
 }
 

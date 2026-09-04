@@ -12,9 +12,11 @@ curl -fsSL https://raw.githubusercontent.com/YImu25/codex-termux/main/codex-inst
 
 ```bash
 codex          # 安全启动，仅访问 Ubuntu 容器
-cx             # 管理 Provider、模型和 API Key
+cx             # 打开手机端总菜单
 cx storage     # 明确授权后，从 /sdcard 启动 Codex
 ```
+
+`cx` 菜单包含安全启动、手机存储启动、模型/API 管理、查看版本、进入 Ubuntu 22.04 和一键更新。原有的 `cx use`、`cx add`、`cx key`、`cx edit` 等子命令保持可用。
 
 脚本默认不启用 `danger-full-access`，不启用 Magisk/Android root，也不把手机共享存储加入普通启动路径。API Key 保存在 Ubuntu 容器内的 `~/.config/codex/env`，权限为 `600`。
 

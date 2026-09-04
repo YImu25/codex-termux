@@ -4,16 +4,15 @@
 # 可选：CODEX_VERSION=rust-v0.153.2、CODEX_FORCE=1、NO_MIRROR=1
 set -Eeuo pipefail
 
-SCRIPT_VERSION='2026.09.04.4'
+SCRIPT_VERSION='2026.09.04.5'
 SCRIPT_RELEASE_DATE='2026-09-04'
 show_script_changelog() {
   say "${C}脚本版本：${SCRIPT_VERSION}（${SCRIPT_RELEASE_DATE}）${N}"
   say '本次更新提示：'
-  say '  · 修复基元律动 Responses 请求携带 web_search 导致的报错'
-  say '  · 切换或更新已有基元律动配置时自动关闭不受支持的联网搜索'
-  say '  · 修复删除模型后仍在切换或自动获取列表中出现的问题'
-  say '  · 删除模型时同步清理重复记录并加入隐藏列表，可手动重新添加恢复'\n  say '  · 新增远程模型隐藏与恢复菜单，修复旧删除记录再次出现'\n  say '  · 重新分组并精简主菜单、模型菜单和中转站菜单'
-  say '  · 更新脚本时显示版本、日期和修复内容'
+  say '  · 修复 /sdcard 重复绑定警告'
+  say '  · 自动安装并验证系统版 bubblewrap'
+  say '  · 修正更新日志提示的换行显示'
+  say '  · 保留基元律动、模型删除和菜单优化等历史修复'
 }
 
 C='\033[1;36m'; G='\033[1;32m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
@@ -153,7 +152,8 @@ if ! apt-get update 2>&1 | tee "$apt_log" \
   apt-get update
 fi
 rm -f "$apt_log"
-apt-get install -y -q curl ca-certificates python3 python3-tomlkit tar gzip coreutils
+apt-get install -y -q curl ca-certificates python3 python3-tomlkit tar gzip coreutils bubblewrap
+command -v bwrap >/dev/null || fail 'bubblewrap 安装完成后仍无法找到 bwrap 命令。'
 
 stage='查询官方 Release'
 work=$(mktemp -d)
@@ -879,7 +879,8 @@ safe_codex() {
 }
 storage_codex() {
   [ -d "$HOME/storage/shared" ] || { echo "请先运行 termux-setup-storage 并允许授权"; return 1; }
-  proot-distro login codex-ubuntu --bind "$HOME/storage/shared:/sdcard" -- bash -lc '[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; cd /sdcard; exec codex "$@"' bash "$@"
+  # 非 isolated 登录已由 proot-distro 映射 /sdcard，避免重复 --bind 警告。
+  proot-distro login codex-ubuntu -- bash -lc '[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; cd /sdcard; exec codex "$@"' bash "$@"
 }
 inner_cx() {
   proot-distro login --isolated codex-ubuntu -- bash -lc '[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; exec cx "$@"' bash "$@"

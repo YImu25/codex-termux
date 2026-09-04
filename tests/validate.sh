@@ -47,9 +47,12 @@ grep -Fq '可选预设模型' "$work/cx-inner.sh"
 grep -Fq '请选择中转站' "$work/cx-inner.sh"
 grep -Fq 'models.tsv' "$work/cx-inner.sh"
 grep -Fq '默认不写入 danger-full-access' "$script"
-grep -Fq "SCRIPT_VERSION='2026.09.04.1'" "$script"
+grep -Fq "SCRIPT_VERSION='2026.09.04.2'" "$script"
 grep -Fq '本次更新提示：' "$script"
 grep -Fq 'show_script_changelog' "$script"
+grep -Fq 'hidden-models.tsv' "$work/cx-inner.sh"
+grep -Fq 'mid not in hidden' "$work/cx-inner.sh"
+grep -Fq 'model_store delete "$p" "$m"' "$work/cx-inner.sh"
 [ -s "$root/CHANGELOG.md" ]
 
 test_home="$work/home"
@@ -59,6 +62,34 @@ printf 'TEST_API_KEY\nsecond\n' | HOME="$test_home" bash "$work/cx-inner.sh" key
 [ "$(grep -c '^export TEST_API_KEY=' "$test_home/.config/codex/env")" -eq 1 ]
 grep -Fq 'export TEST_API_KEY=second' "$test_home/.config/codex/env"
 [ "$(stat -c '%a' "$test_home/.config/codex/env")" = 600 ]
+
+printf 'relay\tdeleted-model\nrelay\tkept-model\nrelay\tdeleted-model\n' >"$test_home/.config/codex/models.tsv"
+printf '1\n4\n1\ny\n0\n0\n' | HOME="$test_home" bash "$work/cx-inner.sh" >/dev/null
+! grep -Fq 
+if CODEX_VERSION=main bash "$work/ubuntu.sh" 0 aarch64-unknown-linux-musl ports >/dev/null 2>&1; then
+  echo '非法 CODEX_VERSION 未被拒绝。' >&2
+  exit 1
+fi
+
+echo '全部静态检查通过。'
+relay\tdeleted-model' "$test_home/.config/codex/models.tsv"
+grep -Fq 
+if CODEX_VERSION=main bash "$work/ubuntu.sh" 0 aarch64-unknown-linux-musl ports >/dev/null 2>&1; then
+  echo '非法 CODEX_VERSION 未被拒绝。' >&2
+  exit 1
+fi
+
+echo '全部静态检查通过。'
+relay\tkept-model' "$test_home/.config/codex/models.tsv"
+grep -Fq 
+if CODEX_VERSION=main bash "$work/ubuntu.sh" 0 aarch64-unknown-linux-musl ports >/dev/null 2>&1; then
+  echo '非法 CODEX_VERSION 未被拒绝。' >&2
+  exit 1
+fi
+
+echo '全部静态检查通过。'
+relay\tdeleted-model' "$test_home/.config/codex/hidden-models.tsv"
+[ "$(stat -c '%a' "$test_home/.config/codex/hidden-models.tsv")" = 600 ]
 
 if CODEX_VERSION=main bash "$work/ubuntu.sh" 0 aarch64-unknown-linux-musl ports >/dev/null 2>&1; then
   echo '非法 CODEX_VERSION 未被拒绝。' >&2

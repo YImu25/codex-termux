@@ -47,12 +47,15 @@ grep -Fq '可选预设模型' "$work/cx-inner.sh"
 grep -Fq '请选择中转站' "$work/cx-inner.sh"
 grep -Fq 'models.tsv' "$work/cx-inner.sh"
 grep -Fq '默认不写入 danger-full-access' "$script"
-grep -Fq "SCRIPT_VERSION='2026.09.04.2'" "$script"
+grep -Fq "SCRIPT_VERSION='2026.09.04.3'" "$script"
 grep -Fq '本次更新提示：' "$script"
 grep -Fq 'show_script_changelog' "$script"
 grep -Fq 'hidden-models.tsv' "$work/cx-inner.sh"
 grep -Fq 'mid not in hidden' "$work/cx-inner.sh"
 grep -Fq 'model_store delete "$p" "$m"' "$work/cx-inner.sh"
+grep -Fq '隐藏中转站返回的模型' "$work/cx-inner.sh"
+grep -Fq '恢复隐藏模型' "$work/cx-inner.sh"
+grep -Fq 'fetch_provider_models "$pid" "$url" "$token"' "$work/cx-inner.sh"
 [ -s "$root/CHANGELOG.md" ]
 
 test_home="$work/home"
@@ -64,7 +67,7 @@ grep -Fq 'export TEST_API_KEY=second' "$test_home/.config/codex/env"
 [ "$(stat -c '%a' "$test_home/.config/codex/env")" = 600 ]
 
 printf 'relay\tdeleted-model\nrelay\tkept-model\nrelay\tdeleted-model\n' >"$test_home/.config/codex/models.tsv"
-printf '1\n4\n1\ny\n0\n0\n' | HOME="$test_home" bash "$work/cx-inner.sh" >/dev/null
+printf '1\n3\n1\ny\n0\n0\n' | HOME="$test_home" bash "$work/cx-inner.sh" >/dev/null
 deleted_row=$(printf 'relay\tdeleted-model')
 kept_row=$(printf 'relay\tkept-model')
 ! grep -Fq "$deleted_row" "$test_home/.config/codex/models.tsv"

@@ -236,8 +236,11 @@ cat >"$cx_tmp" <<'CX'
 set -euo pipefail
 CFG=${HOME}/.codex/config.toml
 ENVF=${HOME}/.config/codex/env
+MODELF=${HOME}/.config/codex/models.tsv
 mkdir -p "$(dirname "$CFG")" "$(dirname "$ENVF")"
 [ -f "$CFG" ] || : >"$CFG"
+[ -f "$MODELF" ] || : >"$MODELF"
+chmod 600 "$MODELF"
 toml_set() {
  python3 - "$CFG" "$@" <<'PY'
 import pathlib,sys,tomlkit
@@ -251,6 +254,42 @@ elif op=='provider':
 tmp=p.with_suffix('.tmp'); tmp.write_text(tomlkit.dumps(d)); tomlkit.parse(tmp.read_text()); tmp.replace(p)
 PY
 }
+model_store() {
+ python3 - "$MODELF" "$@" <<'PY'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); op=sys.argv[2]
+rows=[]
+for line in p.read_text().splitlines():
+    parts=line.split('\t',1)
+    if len(parts)==2 and parts[0] and parts[1]: rows.append(parts)
+def save():
+    tmp=p.with_suffix('.tmp')
+    tmp.write_text(''.join(a+'\t'+b+'\n' for a,b in rows))
+    tmp.chmod(0o600); tmp.replace(p)
+if op=='add':
+    row=[sys.argv[3],sys.argv[4]]
+    if row not in rows: rows.append(row); save()
+elif op=='list':
+    for i,(a,b) in enumerate(rows,1): print(f'  （{i}）{a}/{b}')
+elif op=='get':
+    i=int(sys.argv[3])-1
+    if i<0 or i>=len(rows): raise SystemExit(2)
+    print(rows[i][0]+'\t'+rows[i][1])
+elif op=='edit':
+    i=int(sys.argv[3])-1
+    if i<0 or i>=len(rows): raise SystemExit(2)
+    old=rows[i]; new=[sys.argv[4],sys.argv[5]]
+    rows[i]=new
+    rows[:]=[r for n,r in enumerate(rows) if r!=new or n==i]
+    save(); print(old[0]+'\t'+old[1])
+PY
+}
+valid_model() {
+ local p=$1 m=$2
+ [[ "$p" =~ ^[A-Za-z0-9_-]+$ ]] || { echo '中转站代号只能包含英文字母、数字、下划线和短横线'; return 1; }
+ [ -n "$m" ] && [[ "$m" != *$'\n'* ]] && [[ "$m" != *$'\t'* ]] || { echo '模型名无效'; return 1; }
+}
+remember_model() { model_store add "$1" "$2"; }
 list() { python3 - "$CFG" <<'PY'
 import sys,tomlkit
 d=tomlkit.parse(open(sys.argv[1]).read() or '')
@@ -262,9 +301,82 @@ use_model() {
  local spec=${1:-} p m
  [[ "$spec" == */* ]] || { echo '格式：cx use <中转站代号>/<模型名称>'; return 1; }
  p=${spec%%/*}; m=${spec#*/}
- [[ "$p" =~ ^[A-Za-z0-9_-]+$ ]] || { echo '中转站代号只能包含英文字母、数字、下划线和短横线'; return 1; }
- [ -n "$m" ] && [[ "$m" != *$'\n'* ]] || { echo '模型名无效'; return 1; }
- toml_set model "$p" "$m"; echo "已切换：$p/$m"
+ valid_model "$p" "$m" || return 1
+ toml_set model "$p" "$m"; remember_model "$p" "$m"; echo "已切换：$p/$m"
+}
+show_models() {
+ echo '已添加的模型：'
+ if [ ! -s "$MODELF" ]; then echo '  （暂无）'; else model_store list; fi
+}
+choose_model() {
+ local n row p m
+ show_models; [ -s "$MODELF" ] || return 0
+ read -rp '输入模型序号（0 返回）：' n
+ [ "$n" = 0 ] && return 0
+ row=$(model_store get "$n") || { echo '无效序号。'; return 1; }
+ IFS=$'\t' read -r p m <<<"$row"; use_model "$p/$m"
+}
+edit_model() {
+ local n row oldp oldm p m
+ show_models; [ -s "$MODELF" ] || return 0
+ read -rp '输入要编辑的模型序号（0 返回）：' n; [ "$n" = 0 ] && return 0
+ row=$(model_store get "$n") || { echo '无效序号。'; return 1; }
+ IFS=$'\t' read -r oldp oldm <<<"$row"
+ read -rp "中转站代号 [$oldp]：" p; p=${p:-$oldp}
+ read -rp "模型名称 [$oldm]：" m; m=${m:-$oldm}
+ valid_model "$p" "$m" || return 1
+ model_store edit "$n" "$p" "$m" >/dev/null
+ python3 - "$CFG" "$oldp" "$oldm" "$p" "$m" <<'PY'
+import pathlib,sys,tomlkit
+f,op,om,np,nm=sys.argv[1:]; path=pathlib.Path(f); d=tomlkit.parse(path.read_text() or '')
+if d.get('model_provider')==op and d.get('model')==om:
+ d['model_provider']=np; d['model']=nm
+ t=path.with_suffix('.tmp'); t.write_text(tomlkit.dumps(d)); t.replace(path)
+PY
+ echo "已修改：$oldp/$oldm → $p/$m"
+}
+delete_model() {
+ local n row p m current
+ show_models; [ -s "$MODELF" ] || return 0
+ read -rp '输入要删除的模型序号（0 返回）：' n; [ "$n" = 0 ] && return 0
+ row=$(model_store get "$n") || { echo '无效序号。'; return 1; }
+ IFS=$'\t' read -r p m <<<"$row"
+ current=$(python3 - "$CFG" <<'PY'
+import sys,tomlkit
+d=tomlkit.parse(open(sys.argv[1]).read() or '')
+print(str(d.get('model_provider',''))+'\t'+str(d.get('model','')))
+PY
+)
+ [ "$row" != "$current" ] || { echo '不能删除当前正在使用的模型，请先切换到其他模型。'; return 1; }
+ read -rp "确认删除 $p/$m？请输入 y：" answer
+ [ "$answer" = y ] || { echo '已取消。'; return 0; }
+ python3 - "$MODELF" "$n" <<'PY'
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]); i=int(sys.argv[2])-1; rows=p.read_text().splitlines()
+if i<0 or i>=len(rows): raise SystemExit(2)
+rows.pop(i); t=p.with_suffix('.tmp'); t.write_text(''.join(x+'\n' for x in rows)); t.chmod(0o600); t.replace(p)
+PY
+ echo "已删除：$p/$m"
+}
+model_menu() {
+ local n s
+ while true; do
+  echo; echo '────────── 切换与管理模型 ──────────'
+  echo '  （1）查看并切换已添加的模型'
+  echo '  （2）手动添加并切换模型'
+  echo '  （3）编辑已添加的模型'
+  echo '  （4）删除已添加的模型'
+  echo '  （0）返回'
+  read -rp '请选择 [0-4]：' n
+  case "$n" in
+   1) choose_model || true ;;
+   2) read -rp '请输入“中转站代号/模型名称”：' s; use_model "$s" || true ;;
+   3) edit_model || true ;;
+   4) delete_model || true ;;
+   0) break ;;
+   *) echo '无效选择，请重新输入。' ;;
+  esac
+ done
 }
 add_provider() {
  local pid name url key model
@@ -314,7 +426,7 @@ menu() {
   echo '════════════════════════════════════'
   read -rp '请选择 [0-5]：' n
   case "$n" in
-   1) read -rp '请输入“中转站代号/模型名称”：' s; use_model "$s" || true ;;
+   1) model_menu ;;
    2) add_provider || true ;;
    3) set_key || true ;;
    4) "${EDITOR:-vi}" "$CFG" ;;
@@ -324,7 +436,16 @@ menu() {
   esac
  done
 }
-case ${1:-menu} in menu) menu;; list) list;; use) use_model "${2:-}";; add) add_provider;; key) set_key;; edit) exec "${EDITOR:-vi}" "$CFG";; *) echo '可用命令：cx list（查看）、cx use（切换）、cx add（添加）、cx key（密钥）、cx edit（高级配置）'; exit 1;; esac
+current_row=''
+if [ -s "$CFG" ]; then current_row=$(python3 - "$CFG" <<'PY'
+import sys,tomlkit
+d=tomlkit.parse(open(sys.argv[1]).read() or '')
+p=d.get('model_provider'); m=d.get('model')
+if p and m: print(str(p)+'\t'+str(m))
+PY
+); fi
+if [ -n "$current_row" ]; then IFS=$'\t' read -r current_p current_m <<<"$current_row"; remember_model "$current_p" "$current_m"; fi
+case ${1:-menu} in menu) menu;; list) list; show_models;; use) use_model "${2:-}";; add) add_provider;; key) set_key;; edit) exec "${EDITOR:-vi}" "$CFG";; *) echo '可用命令：cx list（查看）、cx use（切换）、cx add（添加）、cx key（密钥）、cx edit（高级配置）'; exit 1;; esac
 CX
 chmod 0755 "$cx_tmp"; mv -f "$cx_tmp" /usr/local/bin/cx
 

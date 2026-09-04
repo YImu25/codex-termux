@@ -442,52 +442,84 @@ select_remote_model() {
  fi
  [ -n "$SELECTED_MODEL" ] || { echo '模型名称不能为空。'; return 1; }
 }
-add_provider() {
- local kind pid name url key token model
- echo
- echo '────────── 添加中转站 ──────────'
- echo '  （1）基元律动 TokenRhythm（推荐预设）'
- echo '  （2）自定义 OpenAI Responses 兼容中转站'
- echo '  （0）返回'
- read -rp '请选择 [0-2]：' kind
+set_provider_preset() {
+ local kind=$1
+ PRESET_WARN=''
  case "$kind" in
-   1)
-     pid='tokenrhythm'
-     name='基元律动 TokenRhythm'
-     url='https://tokenrhythm.studio/v1'
-     echo "已使用预设接口地址：$url"
-     ;;
-   2)
-     read -rp '中转站代号（例如：myrelay）：' pid
-     [[ "$pid" =~ ^[A-Za-z0-9_-]+$ ]] || { echo '代号只能包含英文字母、数字、下划线和短横线'; return 1; }
-     case "$pid" in openai|ollama|lmstudio) echo '该代号由 Codex 保留，请换一个中转站代号'; return 1;; esac
-     read -rp '中转站名称（可填中文）：' name; [ -n "$name" ] || return 1
-     read -rp '接口地址（例如：https://example.com/v1）：' url
-     [[ "$url" =~ ^https:// ]] || [[ "$url" =~ ^http://(localhost|127\.0\.0\.1)([:/]|$) ]] || { echo '接口地址必须以 https:// 开头；本机地址可以使用 http://'; return 1; }
-     ;;
-   0) return 0 ;;
-   *) echo '无效选择。'; return 1 ;;
+   1) PRESET_PID='tokenrhythm'; PRESET_NAME='基元律动 TokenRhythm'; PRESET_URL='https://tokenrhythm.studio/v1'; PRESET_OK=1 ;;
+   2) PRESET_PID='openai_official'; PRESET_NAME='OpenAI 官方'; PRESET_URL='https://api.openai.com/v1'; PRESET_OK=1 ;;
+   3) PRESET_PID='deepseek'; PRESET_NAME='DeepSeek 官方'; PRESET_URL='https://api.deepseek.com'; PRESET_OK=1 ;;
+   4) PRESET_PID='doubao'; PRESET_NAME='火山方舟 / 豆包'; PRESET_URL='https://ark.cn-beijing.volces.com/api/v3'; PRESET_OK=1 ;;
+   5) PRESET_PID='gemini'; PRESET_NAME='Google Gemini'; PRESET_URL='https://generativelanguage.googleapis.com/v1beta/openai'; PRESET_OK=0; PRESET_WARN='Google 当前公开 OpenAI 兼容文档主要为 Chat Completions，当前 Codex 可能无法使用。' ;;
+   6) PRESET_PID='qwen'; PRESET_NAME='阿里云百炼 / Qwen（中国）'; PRESET_URL='https://dashscope.aliyuncs.com/compatible-mode/v1'; PRESET_OK=0; PRESET_WARN='百炼 OpenAI 兼容端点并不代表支持 Responses API，当前 Codex 兼容性取决于服务端。' ;;
+   7) PRESET_PID='qwen_intl'; PRESET_NAME='阿里云百炼 / Qwen（新加坡）'; PRESET_URL='https://dashscope-intl.aliyuncs.com/compatible-mode/v1'; PRESET_OK=0; PRESET_WARN='百炼 OpenAI 兼容端点并不代表支持 Responses API，当前 Codex 兼容性取决于服务端。' ;;
+   8) PRESET_PID='zhipu'; PRESET_NAME='智谱 GLM'; PRESET_URL='https://open.bigmodel.cn/api/paas/v4'; PRESET_OK=0; PRESET_WARN='智谱公开 OpenAI 兼容文档目前以 Chat Completions 为主，当前 Codex 可能无法使用。' ;;
+   9) PRESET_PID='kimi'; PRESET_NAME='Moonshot / Kimi'; PRESET_URL='https://api.moonshot.cn/v1'; PRESET_OK=0; PRESET_WARN='Kimi 是否支持 Codex 所需 Responses API 请以当前服务端能力为准。' ;;
+   10) PRESET_PID='minimax'; PRESET_NAME='MiniMax'; PRESET_URL='https://api.minimaxi.com/v1'; PRESET_OK=0; PRESET_WARN='MiniMax 是否支持 Codex 所需 Responses API 请以当前服务端能力为准。' ;;
+   11) PRESET_PID='siliconflow'; PRESET_NAME='硅基流动 SiliconFlow'; PRESET_URL='https://api.siliconflow.cn/v1'; PRESET_OK=0; PRESET_WARN='硅基流动是否支持 Codex 所需 Responses API 请以当前服务端能力为准。' ;;
+   *) return 1 ;;
  esac
+}
+add_provider() {
+ local kind pid name url key token model answer
+ echo
+ echo '────────── 添加中转站 / Provider ──────────'
+ echo '  支持当前 Codex Responses API：'
+ echo '  （1）基元律动 TokenRhythm'
+ echo '  （2）OpenAI 官方'
+ echo '  （3）DeepSeek 官方'
+ echo '  （4）火山方舟 / 豆包'
+ echo
+ echo '  常用预设（可能仅支持 Chat Completions）：'
+ echo '  （5）Google Gemini'
+ echo '  （6）阿里云百炼 / Qwen（中国）'
+ echo '  （7）阿里云百炼 / Qwen（新加坡）'
+ echo '  （8）智谱 GLM'
+ echo '  （9）Moonshot / Kimi'
+ echo '  （10）MiniMax'
+ echo '  （11）硅基流动 SiliconFlow'
+ echo '  （12）自定义 OpenAI Responses 兼容中转站'
+ echo '  （0）返回'
+ read -rp '请选择 [0-12]：' kind
+ if [ "$kind" = 0 ]; then return 0; fi
+ if [ "$kind" = 12 ]; then
+   read -rp '中转站代号（例如：myrelay）：' pid
+   [[ "$pid" =~ ^[A-Za-z0-9_-]+$ ]] || { echo '代号只能包含英文字母、数字、下划线和短横线'; return 1; }
+   case "$pid" in openai|ollama|lmstudio) echo '该代号由 Codex 保留，请换一个中转站代号'; return 1;; esac
+   read -rp '中转站名称（可填中文）：' name; [ -n "$name" ] || return 1
+   read -rp '接口地址（例如：https://example.com/v1）：' url
+   [[ "$url" =~ ^https:// ]] || [[ "$url" =~ ^http://(localhost|127\.0\.0\.1)([:/]|$) ]] || { echo '接口地址必须以 https:// 开头；本机地址可以使用 http://'; return 1; }
+ else
+   set_provider_preset "$kind" || { echo '无效选择。'; return 1; }
+   pid=$PRESET_PID; name=$PRESET_NAME; url=$PRESET_URL
+   echo "已选择：$name"
+   echo "接口地址：$url"
+   if [ "$PRESET_OK" != 1 ]; then
+     echo
+     echo "⚠️ 兼容提醒：$PRESET_WARN"
+     echo '新版 Codex 自定义 Provider 使用 Responses API。'
+     read -rp '仍要添加这个预设吗？请输入 y：' answer
+     [ "$answer" = y ] || { echo '已取消。'; return 0; }
+   fi
+ fi
  key=$(printf 'CODEX_%s_API_KEY' "$pid" | tr '[:lower:]-' '[:upper:]_')
- echo '请输入该中转站的 API Key。'
+ echo '请输入该服务的 API Key。'
  read -rsp '密钥（输入时不会显示）：' token; echo
  [ -n "$token" ] || { echo '密钥不能为空。'; return 1; }
  save_key_value "$key" "$token" || { unset token; return 1; }
- echo '密钥已安全保存，正在读取 /v1/models……'
+ echo '密钥已安全保存，正在自动获取模型列表……'
  if fetch_provider_models "$url" "$token"; then
    select_remote_model || { unset token; return 1; }
    model=$SELECTED_MODEL
  else
-   read -rp '模型名称（必须与中转站提供的一致）：' model
+   read -rp '模型名称（必须与服务商提供的一致）：' model
    [ -n "$model" ] || { unset token; return 1; }
  fi
  unset token
  toml_set provider "$pid" "$name" "${url%/}" "$key"
  use_model "$pid/$model"
- echo '中转站添加完成。'
- if [ "$pid" = tokenrhythm ]; then
-   echo '提示：TokenRhythm 中只有标注“Responses API 原生支持”的模型可用于当前新版 Codex。'
- fi
+ echo 'Provider 添加完成。'
+ [ "$kind" = 1 ] && echo 'TokenRhythm：请选择其文档中标注支持 Responses API 的模型。'
 }
 set_key() {
  local key=${1:-} value

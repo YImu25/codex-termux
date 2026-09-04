@@ -4,15 +4,14 @@
 # 可选：CODEX_VERSION=rust-v0.153.2、CODEX_FORCE=1、NO_MIRROR=1
 set -Eeuo pipefail
 
-SCRIPT_VERSION='2026.09.04.5'
-SCRIPT_RELEASE_DATE='2026-09-04'
+SCRIPT_VERSION='2026.09.05.1'
+SCRIPT_RELEASE_DATE='2026-09-05'
 show_script_changelog() {
   say "${C}脚本版本：${SCRIPT_VERSION}（${SCRIPT_RELEASE_DATE}）${N}"
   say '本次更新提示：'
-  say '  · 修复 /sdcard 重复绑定警告'
-  say '  · 自动安装并验证系统版 bubblewrap'
-  say '  · 修正更新日志提示的换行显示'
-  say '  · 保留基元律动、模型删除和菜单优化等历史修复'
+  say '  · 自定义中转站支持 https:// 和 http:// 接口地址'
+  say '  · HTTP 地址启用前显示明文传输风险并要求确认'
+  say '  · 保留存储绑定、bubblewrap、模型管理和菜单优化等历史修复'
 }
 
 C='\033[1;36m'; G='\033[1;32m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
@@ -711,8 +710,19 @@ add_provider() {
    [[ "$pid" =~ ^[A-Za-z0-9_-]+$ ]] || { echo '代号只能包含英文字母、数字、下划线和短横线'; return 1; }
    case "$pid" in openai|ollama|lmstudio) echo '该代号由 Codex 保留，请换一个中转站代号'; return 1;; esac
    read -rp '中转站名称（可填中文）：' name; [ -n "$name" ] || return 1
-   read -rp '接口地址（例如：https://example.com/v1）：' url
-   [[ "$url" =~ ^https:// ]] || [[ "$url" =~ ^http://(localhost|127\.0\.0\.1)([:/]|$) ]] || { echo '接口地址必须以 https:// 开头；本机地址可以使用 http://'; return 1; }
+   read -rp '接口地址（支持 https:// 或 http://）：' url
+   [[ "$url" =~ ^https?://[^[:space:]]+$ ]] || {
+     echo '接口地址格式错误，必须以 https:// 或 http:// 开头，且不能包含空格。'
+     return 1
+   }
+   if [[ "$url" =~ ^http:// ]]; then
+     echo
+     echo '⚠️ 安全警告：当前地址使用未加密的 HTTP。'
+     echo 'API Key 和对话内容可能被同一网络中的其他设备截获。'
+     echo '仅应连接你信任的本机、局域网或受保护网络服务。'
+     read -rp '确认仍要使用 HTTP？请输入 y：' answer
+     [ "$answer" = y ] || { echo '已取消添加。'; return 0; }
+   fi
  else
    set_provider_preset "$kind" || { echo '无效选择。'; return 1; }
    pid=$PRESET_PID; name=$PRESET_NAME; url=$PRESET_URL

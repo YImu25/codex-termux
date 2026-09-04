@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Codex CLI 一键安装脚本 — Termux / Android（proot-distro + Ubuntu）
+# Codex CLI 一键安装脚本 — Termux / Android（proot-distro + Ubuntu 22.04）
 # 用法：curl -fsSL https://raw.githubusercontent.com/YImu25/codex-termux/main/codex-install.sh | bash
 # 可选：CODEX_VERSION=rust-v0.153.2、CODEX_FORCE=1、NO_MIRROR=1
 set -Eeuo pipefail
@@ -31,9 +31,11 @@ pkg install -y proot-distro curl ca-certificates -o Dpkg::Use-Pty=0
 command -v proot-distro >/dev/null || die 'proot-distro 安装失败。'
 
 stage='安装 Ubuntu'
-if ! proot-distro login ubuntu -- /bin/true >/dev/null 2>&1; then
-  say "${Y}首次安装 Ubuntu；本步骤不修改 proot-distro 自带配置。${N}"
-  proot-distro install ubuntu
+DISTRO=codex-ubuntu
+if ! proot-distro login "$DISTRO" -- /bin/true >/dev/null 2>&1; then
+  say "${Y}首次安装独立的 Ubuntu 22.04 容器：${DISTRO}${N}"
+  say "${Y}现有的 ubuntu 容器不会被删除或修改。${N}"
+  proot-distro install ubuntu:22.04 --name "$DISTRO"
 fi
 
 stage='生成容器安装程序'
@@ -67,17 +69,22 @@ trap cleanup EXIT INT TERM
 stage='配置 Ubuntu 软件源'
 if [ "$MIRROR" = 1 ]; then
   stamp=$(date +%Y%m%d-%H%M%S)
+  backup_dir=/var/backups/codex-termux
+  mkdir -p "$backup_dir"
   if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
     src=/etc/apt/sources.list.d/ubuntu.sources
-    [ -e "${src}.codex-original" ] || cp -a "$src" "${src}.codex-original"
-    cp -a "$src" "${src}.bak.${stamp}"
+    if [ -e "${src}.codex-original" ] && [ ! -e "$backup_dir/ubuntu.sources.original" ]; then
+      cp -a "${src}.codex-original" "$backup_dir/ubuntu.sources.original"
+    fi
+    [ -e "$backup_dir/ubuntu.sources.original" ] || cp -a "$src" "$backup_dir/ubuntu.sources.original"
+    cp -a "$src" "$backup_dir/ubuntu.sources.${stamp}"
     if [ "$APT_KIND" = ports ]; then uri='https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports'; else uri='https://mirrors.tuna.tsinghua.edu.cn/ubuntu'; fi
     sed -E "s|^URIs:[[:space:]]+.*|URIs: $uri|" "$src" >"${src}.tmp"
     mv "${src}.tmp" "$src"
   elif [ -f /etc/apt/sources.list ]; then
     src=/etc/apt/sources.list
-    [ -e "${src}.codex-original" ] || cp -a "$src" "${src}.codex-original"
-    cp -a "$src" "${src}.bak.${stamp}"
+    [ -e "$backup_dir/sources.list.original" ] || cp -a "$src" "$backup_dir/sources.list.original"
+    cp -a "$src" "$backup_dir/sources.list.${stamp}"
     if [ "$APT_KIND" = ports ]; then uri='https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports'; else uri='https://mirrors.tuna.tsinghua.edu.cn/ubuntu'; fi
     sed -E "s|https?://[^ ]+/ubuntu(-ports)?|$uri|g" "$src" >"${src}.tmp"
     mv "${src}.tmp" "$src"
@@ -86,7 +93,24 @@ fi
 
 stage='安装 Ubuntu 依赖'
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -q
+apt_log=$(mktemp)
+if ! apt-get update 2>&1 | tee "$apt_log" \
+   || grep -Eqi 'Failed to fetch|certificate verify failed|Some index files failed' "$apt_log"; then
+  printf '镜像更新失败，自动切换 Ubuntu 官方源后重试。\n' >&2
+  if [ "${src:-}" = /etc/apt/sources.list.d/ubuntu.sources ]; then
+    if [ "$APT_KIND" = ports ]; then official='http://ports.ubuntu.com/ubuntu-ports'; else official='http://archive.ubuntu.com/ubuntu'; fi
+    sed -E "s|^URIs:[[:space:]]+.*|URIs: $official|" "$src" >"${src}.tmp"
+    mv "${src}.tmp" "$src"
+  elif [ "${src:-}" = /etc/apt/sources.list ]; then
+    if [ "$APT_KIND" = ports ]; then official='http://ports.ubuntu.com/ubuntu-ports'; else official='http://archive.ubuntu.com/ubuntu'; fi
+    sed -E "s|https?://[^ ]+/ubuntu(-ports)?|$official|g" "$src" >"${src}.tmp"
+    mv "${src}.tmp" "$src"
+  else
+    fail '找不到可恢复的 Ubuntu 软件源配置。'
+  fi
+  apt-get update
+fi
+rm -f "$apt_log"
 apt-get install -y -q curl ca-certificates python3 python3-tomlkit tar gzip coreutils
 
 stage='查询官方 Release'
@@ -243,7 +267,7 @@ chmod 700 "$tmp_outer"
 
 stage='在 Ubuntu 内安装 Codex'
 CODEX_VERSION=${CODEX_VERSION:-latest} CODEX_FORCE=${CODEX_FORCE:-0} \
-  proot-distro login ubuntu --shared-tmp -- bash "$tmp_outer" "$mirror" "$target" "$apt_kind"
+  proot-distro login "$DISTRO" --shared-tmp -- bash "$tmp_outer" "$mirror" "$target" "$apt_kind"
 
 install_wrapper() {
   local name=$1 content=$2 dst="$PREFIX/bin/$name" stamp
@@ -256,15 +280,15 @@ install_wrapper() {
 stage='写入 Termux 包装命令'
 install_wrapper codex '#!/data/data/com.termux/files/usr/bin/bash
 # codex-termux-managed
-exec proot-distro login --isolated ubuntu -- bash -lc '\''[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; exec codex "$@"'\'' bash "$@"'
+exec proot-distro login --isolated codex-ubuntu -- bash -lc '\''[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; exec codex "$@"'\'' bash "$@"'
 install_wrapper cx '#!/data/data/com.termux/files/usr/bin/bash
 # codex-termux-managed
 if [ "${1:-}" = storage ]; then
   shift
   [ -d "$HOME/storage/shared" ] || { echo "请先运行 termux-setup-storage 并授权"; exit 1; }
-  exec proot-distro login ubuntu --bind "$HOME/storage/shared:/sdcard" -- bash -lc '\''[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; cd /sdcard; exec codex "$@"'\'' bash "$@"
+  exec proot-distro login codex-ubuntu --bind "$HOME/storage/shared:/sdcard" -- bash -lc '\''[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; cd /sdcard; exec codex "$@"'\'' bash "$@"
 fi
-exec proot-distro login --isolated ubuntu -- bash -lc '\''[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; exec cx "$@"'\'' bash "$@"'
+exec proot-distro login --isolated codex-ubuntu -- bash -lc '\''[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; exec cx "$@"'\'' bash "$@"'
 
 say "${G}安装完成。${N}"
 say '  codex       安全启动（仅容器）'

@@ -319,32 +319,41 @@ if [ "${CODEX_UPDATE_ONLY:-0}" = 1 ]; then
   exit 0
 fi
 
-install_wrapper() {
-  local name content dst stamp
+install_wrapper_file() {
+  local name source dst stamp t
   name=$1
-  content=$2
+  source=$2
   dst="$PREFIX/bin/$name"
   if [ -e "$dst" ] && ! grep -q 'codex-termux-managed' "$dst" 2>/dev/null; then
     stamp=$(date +%Y%m%d-%H%M%S); cp -a "$dst" "${dst}.bak.${stamp}"
     say "${Y}已备份原有 $dst → ${dst}.bak.${stamp}${N}"
   fi
-  local t; t=$(mktemp "${dst}.XXXXXX"); printf '%s\n' "$content" >"$t"; chmod 0755 "$t"; mv -f "$t" "$dst"
+  t=$(mktemp "${dst}.XXXXXX")
+  cp "$source" "$t"
+  chmod 0755 "$t"
+  mv -f "$t" "$dst"
 }
 stage='写入 Termux 包装命令'
-install_wrapper codex '#!/data/data/com.termux/files/usr/bin/bash
+wrapper_tmp=$(mktemp)
+cat >"$wrapper_tmp" <<'CODEX_WRAPPER'
+#!/data/data/com.termux/files/usr/bin/bash
 # codex-termux-managed
-exec proot-distro login --isolated codex-ubuntu -- bash -lc '\''[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; exec codex "$@"'\'' bash "$@"'
-install_wrapper cx '#!/data/data/com.termux/files/usr/bin/bash
+exec proot-distro login --isolated codex-ubuntu -- bash -lc '[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; exec codex "$@"' bash "$@"
+CODEX_WRAPPER
+install_wrapper_file codex "$wrapper_tmp"
+
+cat >"$wrapper_tmp" <<'CX_WRAPPER'
+#!/data/data/com.termux/files/usr/bin/bash
 # codex-termux-managed
 safe_codex() {
-  proot-distro login --isolated codex-ubuntu -- bash -lc '\''[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; exec codex "$@"'\'' bash "$@"
+  proot-distro login --isolated codex-ubuntu -- bash -lc '[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; exec codex "$@"' bash "$@"
 }
 storage_codex() {
   [ -d "$HOME/storage/shared" ] || { echo "请先运行 termux-setup-storage 并允许授权"; return 1; }
-  proot-distro login codex-ubuntu --bind "$HOME/storage/shared:/sdcard" -- bash -lc '\''[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; cd /sdcard; exec codex "$@"'\'' bash "$@"
+  proot-distro login codex-ubuntu --bind "$HOME/storage/shared:/sdcard" -- bash -lc '[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; cd /sdcard; exec codex "$@"' bash "$@"
 }
 inner_cx() {
-  proot-distro login --isolated codex-ubuntu -- bash -lc '\''[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; exec cx "$@"'\'' bash "$@"
+  proot-distro login --isolated codex-ubuntu -- bash -lc '[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; exec cx "$@"' bash "$@"
 }
 root_codex() {
   local answer root_command
@@ -368,7 +377,7 @@ root_codex() {
     echo '未检测到 tsu。手机必须已通过 Magisk Root，再运行：pkg install tsu'
     return 1
   fi
-  root_command="$PREFIX/bin/proot-distro login codex-ubuntu -- bash -lc '\''[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; exec codex'\''"
+  printf -v root_command '%q ' "$PREFIX/bin/proot-distro" login codex-ubuntu -- bash -lc '[ ! -f ~/.config/codex/env ] || source ~/.config/codex/env; exec codex'
   echo '正在以 Android Root 权限启动 Codex……'
   tsu -c "$root_command"
 }
@@ -428,10 +437,13 @@ case "${1:-}" in
   help|-h|--help)
     echo "用法：cx [menu|start|storage|root|version|ubuntu|update-codex|update-script|list|use|add|key|edit]" ;;
   *) inner_cx "$@" ;;
-esac'
+esac
+CX_WRAPPER
+install_wrapper_file cx "$wrapper_tmp"
+rm -f "$wrapper_tmp"
 
 say "${G}安装完成。${N}"
 say '  codex       安全启动（仅容器）'
-say '  cx          模型与 Provider 管理'
+say '  cx          打开中文功能菜单'
 say '  cx storage  主动授权后读写手机共享存储'
 say "${Y}本脚本不启用 Android/Magisk root，也不默认写入 danger-full-access。${N}"
